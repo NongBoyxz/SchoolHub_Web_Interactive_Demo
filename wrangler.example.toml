@@ -1,0 +1,9 @@
+# Optional local-development example only. Do not paste placeholder IDs into deployed configuration.
+name = "schoolhub-web-interactive-demo"
+compatibility_date = "2026-11-12"
+pages_build_output_dir = "./public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "schoolhub-staging"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"

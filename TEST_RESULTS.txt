@@ -1,0 +1,42 @@
+TAP version 13
+# (node:1741) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: initial setup only once, session login works
+ok 1 - initial setup only once, session login works
+  ---
+  duration_ms: 164.162025
+  type: 'test'
+  ...
+# Subtest: clubs and student persistence, duplicate check, quota and conflict
+ok 2 - clubs and student persistence, duplicate check, quota and conflict
+  ---
+  duration_ms: 15.976654
+  type: 'test'
+  ...
+# Subtest: club transfer, audit, CSV export
+ok 3 - club transfer, audit, CSV export
+  ---
+  duration_ms: 3.271285
+  type: 'test'
+  ...
+# Subtest: teacher assignment and scope enforcement
+ok 4 - teacher assignment and scope enforcement
+  ---
+  duration_ms: 78.68637
+  type: 'test'
+  ...
+# Subtest: logout clears access
+ok 5 - logout clears access
+  ---
+  duration_ms: 3.26115
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 333.69218
