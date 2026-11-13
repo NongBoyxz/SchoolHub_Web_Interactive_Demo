@@ -403,7 +403,9 @@ function parseImportRows(raw) {
     if(!item||typeof item!=='object'||Array.isArray(item))throw error(`รูปแบบข้อมูลแถว ${i+2} ไม่ถูกต้อง`);
     const get=(key,max)=>{const value=item[key]; if(typeof value!=='string' && typeof value!=='number' && value!==undefined && value!==null)throw error(`ข้อมูลแถว ${i+2} ไม่ถูกต้อง: ${key}`);
       const str=String(value??'').trim().normalize('NFC');if(str.length>max)throw error(`ข้อมูลแถว ${i+2} ยาวเกินกำหนด: ${key}`);return str;};
-    return {line:i+2,student_no:get('student_no',30),prefix:get('prefix',20),first_name:get('first_name',100),last_name:get('last_name',100),club_name:get('club_name',120)};
+    const sourceLine=item.source_line===undefined?i+2:Number(item.source_line);
+    if(!Number.isInteger(sourceLine)||sourceLine<2||sourceLine>2000)throw error(`หมายเลขแถวต้นฉบับไม่ถูกต้อง: รายการ ${i+1}`);
+    return {line:sourceLine,student_no:get('student_no',30),prefix:get('prefix',20),first_name:get('first_name',100),last_name:get('last_name',100),club_name:get('club_name',120)};
   });
 }
 function previewRowLine(entry,action,detail='') {return {line:entry.line,student_no:entry.student_no,student_name:[entry.prefix,entry.first_name,entry.last_name].filter(Boolean).join(' '),action,detail};}
@@ -425,14 +427,14 @@ async function importPlan(db,user,p) {
   ]);
   const clubs=clubsResult.results||[], clubMap=new Map(clubs.filter(c=>c.active).map(c=>[normalizeClubName(c.name),c]));
   const counts=new Map((countResult.results||[]).map(c=>[c.id,Number(c.n)]));
-  const seen=new Set(),items=[],errors=[],ops=[],deltas=new Map();
+  const seen=new Map(),items=[],errors=[],ops=[],deltas=new Map();
   const delta=(club,n)=>{if(club)deltas.set(club,(deltas.get(club)||0)+n);};
   for(const row of rows){
     const issues=[];
     if(!row.student_no)issues.push('ไม่มีเลขประจำตัวนักเรียน');
     if(!row.first_name)issues.push('ไม่มีชื่อ');
     if(!row.last_name)issues.push('ไม่มีนามสกุล');
-    if(row.student_no){if(seen.has(row.student_no))issues.push('เลขประจำตัวซ้ำภายในไฟล์');seen.add(row.student_no);}
+    if(row.student_no){if(seen.has(row.student_no))issues.push(`เลขประจำตัวซ้ำภายในไฟล์ (ปรากฏครั้งแรกที่แถว ${seen.get(row.student_no)})`);else seen.set(row.student_no,row.line);}
     const current=byNo.get(row.student_no);
     if(current&&current.room_id!==roomId)issues.push('เลขประจำตัวนี้อยู่คนละห้อง ต้องย้ายห้องจากเมนูนักเรียนก่อน');
     if(current&&(current.archived||current.status!=='active'))issues.push('เลขประจำตัวนี้ไม่อยู่ในสถานะใช้งาน ต้องกู้คืนหรือแก้สถานะก่อน');
@@ -473,7 +475,9 @@ async function importPlan(db,user,p) {
   }
   const override=p.override_capacity===true, reason=cleanString(p.reason,200);
   if(over.length&&(!override || reason.length<5)){
-    errors.push({line:0,student_no:'',student_name:'',action:'error',detail:`ชุมนุมเกินโควตา: ${over.map(c=>c.name).join(', ')}; ต้องติ๊กอนุญาตและกรอกเหตุผลอย่างน้อย 5 ตัวอักษร`});
+    errors.push({line:0,student_no:'',student_name:'',action:'error',detail:`ชุมนุมเกินโควตา: ${over.map(c=>c.name).join(', ')}; ต้องติ๊กอนุญาตและกรอกเหตุผลอย่างน้อย 5 ตัวอักษร`,
+      related_students:ops.filter(op=>['add','update'].includes(op.kind) && over.some(c=>c.id===op.club_id))
+        .map(op=>({line:op.row.line,student_no:op.row.student_no,student_name:[op.row.prefix,op.row.first_name,op.row.last_name].filter(Boolean).join(' ')}))});
   }
   if(override&&reason.length<5)errors.push({line:0,action:'error',detail:'เหตุผลกรณีเพิ่มเกินโควตาต้องมีอย่างน้อย 5 ตัวอักษร'});
   if(mode==='sync' && reason.length<5)errors.push({line:0,action:'error',detail:'โหมดซิงก์ทั้งห้องต้องกรอกเหตุผลอย่างน้อย 5 ตัวอักษร'});
@@ -561,7 +565,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.3.0'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.3.1'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}

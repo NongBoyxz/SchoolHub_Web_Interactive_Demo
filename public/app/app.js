@@ -273,16 +273,55 @@ function renderImport(){
   }catch(e){$('import-feedback').textContent='เกิดข้อผิดพลาด: '+e.message;notify(e.message);}finally{button.disabled=false;}
  };
 }
+// Make every import problem traceable to the exact student and spreadsheet row.
+// The same error data is used for the on-screen list and downloadable report.
+function importIssueLabel(issue){
+ const line=Number(issue.line)||0;
+ const number=String(issue.student_no||'').trim();
+ const student=String(issue.student_name||'').trim();
+ return {line:line>0?`แถว ${line}`:'ทั้งไฟล์',number:number||'ไม่ระบุเลขประจำตัว',student:student||'ไม่ระบุชื่อ',detail:String(issue.detail||'ไม่ระบุสาเหตุ')};
+}
+function downloadImportErrors(data){
+ const issues=Array.isArray(data.errors)?data.errors:[];
+ const protect=value=>{const s=String(value??'');return /^[\s]*[=+\-@\t\r]/.test(s)?`'${s}`:s;};
+ const cell=value=>`"${protect(value).replaceAll('"','""')}"`;
+ const lines=[['แถวใน Excel','เลขประจำตัว','ชื่อ-นามสกุล','สาเหตุ','นักเรียนที่เกี่ยวข้อง'].map(cell).join(',')];
+ for(const e of issues){
+  const detail=importIssueLabel(e);
+  const related=(e.related_students||[]).map(x=>`${x.line?`แถว ${x.line} `:''}${x.student_no||'—'} ${x.student_name||'—'}`).join(' / ');
+  lines.push([detail.line,detail.number,detail.student,detail.detail,related].map(cell).join(','));
+ }
+ const blob=new Blob(['\uFEFF'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+ const url=URL.createObjectURL(blob),anchor=document.createElement('a');
+ anchor.href=url;anchor.download=`SchoolHub_Import_Errors_${String(data.room?.id||'room').replace(/[^a-zA-Z0-9_-]/g,'_')}.csv`;
+ document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
 function renderImportPreview(data){
  const container=root.querySelector('#import-result');container.hidden=false;
  const label={add:'เพิ่มใหม่',update:'ปรับปรุง',unchanged:'ไม่เปลี่ยน',archive:'นำออก (Soft Delete)',error:'ผิดพลาด'};
- const summary=data.summary;
- const rows=data.items.map(r=>`<tr><td>${r.line||'—'}</td><td>${esc(r.student_no)}</td><td>${esc(r.student_name)}</td>
-   <td><span class="tag ${r.action==='error'||r.action==='archive'?'warning':r.action==='unchanged'?'neutral':''}">${label[r.action]||esc(r.action)}</span></td><td class="reason-cell">${esc(r.detail)}</td></tr>`).join('');
- const errs=data.errors.filter(e=>!data.items.includes(e));
+ const summary=data.summary,items=Array.isArray(data.items)?data.items:[],issues=Array.isArray(data.errors)?data.errors:[];
+ const hasRowErrors=items.some(x=>x.action==='error');
+ const rows=items.map((r,index)=>`<tr id="import-row-${index}" data-import-action="${esc(r.action)}" class="${r.action==='error'?'import-error-row':''}">
+  <td>${r.line||'—'}</td><td>${esc(r.student_no)}</td><td>${esc(r.student_name)}</td>
+  <td><span class="tag ${r.action==='error'||r.action==='archive'?'warning':r.action==='unchanged'?'neutral':''}">${label[r.action]||esc(r.action)}</span></td>
+  <td class="reason-cell">${esc(r.detail)}</td></tr>`).join('');
+ const issueCards=issues.map((e,i)=>{
+  const v=importIssueLabel(e);
+  const rowIndex=items.findIndex(x=>x.action==='error'&&x.line===e.line&&x.student_no===e.student_no&&x.student_name===e.student_name);
+  const linked=rowIndex>=0?`<a class="import-issue-link" href="#import-row-${rowIndex}" data-target="import-row-${rowIndex}" aria-label="ดูรายการแถว ${Number(e.line)||'?'} ในตาราง">ดูในตาราง ↓</a>`:'';
+  const related=Array.isArray(e.related_students)&&e.related_students.length?`<div class="import-related">ผู้ที่เกี่ยวข้อง: ${e.related_students.map(x=>`<span>${esc(`แถว ${x.line} • ${x.student_no||'ไม่ระบุเลขประจำตัว'} • ${x.student_name||'ไม่ระบุชื่อ'}`)}</span>`).join('')}</div>`:'';
+  return `<li class="import-issue" data-issue-index="${i}"><div class="import-issue-head"><strong>${esc(v.line)}</strong><span class="import-student-id">เลขประจำตัว: <strong>${esc(v.number)}</strong></span><span>ชื่อ: <strong>${esc(v.student)}</strong></span>${linked}</div>
+   <div class="import-issue-detail">⚠ ${esc(v.detail)}</div>${related}</li>`;
+ }).join('');
  container.innerHTML=`<div class="card stack"><div class="row between"><h3>② ตัวอย่างการเปลี่ยนแปลง • ม.${data.room.grade}/${data.room.room_no}</h3><span class="tag ${summary.errors?'warning':''}">${summary.errors?'มีข้อผิดพลาด':'พร้อมยืนยัน'}</span></div>
  <div class="import-stats"><span class="tag">เพิ่ม ${summary.add}</span><span class="tag neutral">แก้ไข ${summary.update}</span><span class="tag neutral">ไม่เปลี่ยน ${summary.unchanged}</span><span class="tag warning">นำออก ${summary.archive}</span><span class="tag ${summary.errors?'warning':'neutral'}">ผิดพลาด ${summary.errors}</span></div>
- ${errs.length?`<div class="warning-box">${errs.map(e=>`<div>${esc(e.detail)}</div>`).join('')}</div>`:''}
+ ${issues.length?`<section class="import-errors" aria-labelledby="import-errors-heading" role="region">
+  <div class="row between"><div><h4 id="import-errors-heading">⚠️ พบข้อผิดพลาด ${issues.length} รายการ</h4><p class="sub">ระบุแถว เลขประจำตัว และชื่อผู้เรียน เพื่อค้นหาและแก้ไขใน Excel ก่อนตรวจใหม่</p></div>
+  <button type="button" id="import-export-errors" class="btn small">⬇ ดาวน์โหลดรายการผิดพลาด (.csv)</button></div>
+  <ol class="import-issue-list">${issueCards}</ol></section>`:''}
+ <div class="row between import-table-toolbar"><strong>ตารางพรีวิว (${items.length} แถว)</strong><div class="actions">
+  ${hasRowErrors?`<button class="btn small" id="import-filter-errors" type="button" aria-pressed="true">เฉพาะแถวที่ผิด (${items.filter(r=>r.action==='error').length})</button><button class="btn small" id="import-filter-all" type="button" aria-pressed="false">แสดงทั้งหมด (${items.length})</button>`:''}
+ </div></div><p id="import-filter-label" class="sub" aria-live="polite"></p>
  <div class="table-wrap"><table class="data-table"><thead><tr><th>แถว</th><th>เลขประจำตัว</th><th>ชื่อ-นามสกุล</th><th>การดำเนินการ</th><th>รายละเอียด</th></tr></thead><tbody>${rows}</tbody></table></div>
  ${data.mode==='sync'?`<div class="sync-confirm"><h3>⚠️ โหมดซิงก์ทั้งห้อง</h3><p>นักเรียนที่ไม่อยู่ในไฟล์จำนวน <strong>${summary.archive}</strong> คน จะถูกนำออกจากรายการใช้งาน (ไม่ลบถาวร)</p>
  <label class="checkbox-inline"><input id="import-ack" type="checkbox"/> ยืนยันว่าได้ตรวจสอบรายชื่อที่จะนำออกทั้งหมดแล้ว</label>
@@ -291,6 +330,23 @@ function renderImportPreview(data){
  <button class="btn primary" id="import-save" ${summary.errors?'disabled':''}>✅ ยืนยันและนำเข้าข้อมูล</button></div>
  <div id="import-save-response" role="status" class="mini"></div>
  </div>`;
+ if(issues.length){container.querySelector('#import-export-errors').onclick=()=>downloadImportErrors(data);
+  container.querySelectorAll('.import-issue-link').forEach(a=>a.addEventListener('click',event=>{
+   event.preventDefault();const target=document.getElementById(a.dataset.target);
+   if(target){target.hidden=false;target.scrollIntoView({behavior:'smooth',block:'center'});target.classList.add('import-highlight');
+    setTimeout(()=>target.classList.remove('import-highlight'),1600);}
+  }));
+ }
+ if(hasRowErrors){
+  const tableRows=[...container.querySelectorAll('tr[data-import-action]')],filterLabel=container.querySelector('#import-filter-label');
+  const setFilter=onlyErrors=>{for(const r of tableRows)r.hidden=onlyErrors&&r.dataset.importAction!=='error';
+   container.querySelector('#import-filter-errors').setAttribute('aria-pressed',String(onlyErrors));
+   container.querySelector('#import-filter-all').setAttribute('aria-pressed',String(!onlyErrors));
+   filterLabel.textContent=onlyErrors?'กำลังแสดงเฉพาะนักเรียนที่มีข้อผิดพลาด':'กำลังแสดงนักเรียนทุกรายการ';};
+  container.querySelector('#import-filter-errors').onclick=()=>setFilter(true);
+  container.querySelector('#import-filter-all').onclick=()=>setFilter(false);
+  setFilter(true);
+ }
  const button=container.querySelector('#import-save');
  if(button)button.onclick=async()=>{
    const draft=state.importDraft;if(!draft)return;

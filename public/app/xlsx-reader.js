@@ -81,7 +81,7 @@ function mapRows(sheetRows){
  if(!first || HEADERS.some((header,i)=>String(first[i]??'').trim()!==header))
    fail('หัวคอลัมน์ไม่ตรงแบบฟอร์ม v1.3 กรุณาดาวน์โหลดแบบฟอร์มและจัดเรียง: '+HEADERS.join(', '));
  const firstIndex=sheetRows.findIndex(r=>r.values.some(v=>String(v).trim()));
- const rows=sheetRows.slice(firstIndex+1).filter(r=>r.values.some(v=>String(v).trim())).map(r=>Object.fromEntries(FIELDS.map((key,i)=>[key,String(r.values[i]??'').trim()])));
+ const rows=sheetRows.slice(firstIndex+1).filter(r=>r.values.some(v=>String(v).trim())).map(r=>({...Object.fromEntries(FIELDS.map((key,i)=>[key,String(r.values[i]??'').trim()])),source_line:r.rowNo}));
  if(!rows.length)fail('ไฟล์ไม่มีข้อมูลนักเรียน กรุณากรอกข้อมูลก่อน');
  if(rows.length>120)fail('จำกัดการนำเข้าไม่เกิน 120 คนต่อครั้ง');
  return rows;

@@ -22,3 +22,20 @@
 
 /* v1.3 — XLSX preview and confirmation */
 .import-panel{max-width:1100px}.import-panel input[type=file]{padding:7px;min-height:44px}.import-stats{display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 12px}.sync-confirm{border:1px solid #f2c575;background:#fff8e8;border-radius:12px;padding:18px;display:grid;gap:12px;max-width:650px}.sync-confirm h3{color:#895211}.sync-confirm .field{max-width:350px}.import-panel .checkbox-inline input,.sync-confirm .checkbox-inline input{width:18px;min-height:18px;height:18px;flex:0 0 18px;margin:0}.import-panel #import-feedback{font-weight:650;color:#385c85}.import-panel .warning-box{line-height:1.6}
+
+/* v1.3.1 — identify the student associated with each import problem */
+.import-errors{background:#fff8ed;border:1px solid #eed4ab;border-left:4px solid #df922c;padding:18px;border-radius:12px}
+.import-errors h4{font-size:16px;color:#7c4c10;margin-bottom:4px}
+.import-errors .sub{font-size:12px;line-height:1.55;margin:0}
+.import-issue-list{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;max-height:400px;overflow:auto}
+.import-issue{background:white;border:1px solid #efdfc9;border-radius:10px;padding:10px 12px}
+.import-issue-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 15px;font-size:13px;color:#465d74}
+.import-issue-head>strong{background:#fff1d8;color:#8b5713;padding:4px 8px;border-radius:6px}
+.import-student-id{white-space:normal}
+.import-issue-detail{font-size:12px;margin-top:8px;color:#9b5f0c;line-height:1.6;overflow-wrap:anywhere}
+.import-issue-link{font-size:12px;font-weight:700;color:#175caa;margin-left:auto}
+.import-related{margin-top:7px;display:flex;flex-direction:column;gap:3px;font-size:12px;color:#70552c}
+.import-table-toolbar{margin-top:8px}.import-table-toolbar .btn[aria-pressed=true]{background:#e5f1ff;border-color:#94bdeb;color:#0c4f9a}
+.import-error-row{background:#fff9ee}.import-highlight{outline:3px solid #f4aa3b;outline-offset:-3px}
+.data-table tr[hidden]{display:none}
+@media(max-width:800px){.import-errors{padding:13px}.import-issue-head{align-items:flex-start;gap:6px}.import-issue-link{margin-left:0}}

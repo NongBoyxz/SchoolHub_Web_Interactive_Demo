@@ -118,6 +118,13 @@ test('v1.3 Excel preview/commit: room-scoped add/update, duplicates, stale previ
   r=await call('students?room_id=2569-2-1','GET',null,session);assert.equal(r.data.items.length,2);
   const duplicate={...payload,rows:[makeRow('TEST-001','หนึ่ง'),makeRow('TEST-001','ซ้ำ')]};
   r=await call('import/preview','POST',duplicate,session);assert.equal(r.status,200);assert.ok(r.data.summary.errors>0);
+  assert.equal(r.data.errors[0].student_no,'TEST-001');
+  assert.match(r.data.errors[0].student_name,/ซ้ำ/);
+  assert.match(r.data.errors[0].detail,/แถว 2/);
+  const sourceLinePreview=await call('import/preview','POST',{...payload,rows:[{...makeRow('TEST-900','ชื่อระบุแถวจริง','ไม่พบชุมนุม'),source_line:29}]},session);
+  assert.equal(sourceLinePreview.data.errors[0].line,29);
+  assert.equal(sourceLinePreview.data.errors[0].student_no,'TEST-900');
+  assert.match(sourceLinePreview.data.errors[0].student_name,/ชื่อระบุแถวจริง/);
   result=await call('import/commit','POST',{...duplicate,preview_hash:r.data.preview_hash},session);assert.equal(result.status,409);
   r=await call('import/preview','POST',{...payload,rows:[makeRow('TEST-003','สาม','ชุมนุมไม่มีจริง')]},session);
   assert.ok(r.data.summary.errors>0);
@@ -148,6 +155,9 @@ test('v1.3 stale preview and club quota override are enforced on server',async()
   r=await call('students','POST',{student_no:'TEST-102',prefix:'นาย',first_name:'เพิ่งเพิ่ม',last_name:'ชุมนุม',room_id:'2569-1-1',club_id:importClub},session);assert.equal(r.status,201);
   r=await call('import/commit','POST',{...payload,preview_hash:originalHash},session);assert.equal(r.status,409);
   r=await call('import/preview','POST',payload,session);assert.ok(r.data.summary.errors>0);
+  const quotaIssue=r.data.errors.find(e=>e.detail.includes('โควตา'));
+  assert.ok(quotaIssue?.related_students?.some(s=>s.student_no==='TEST-101'&&s.student_name.includes('นำเข้า')),
+    'quota issue identifies student number and name');
   const override={...payload,override_capacity:true,reason:'ได้รับอนุญาตพิเศษแล้ว'};
   r=await call('import/preview','POST',override,session);assert.equal(r.data.summary.errors,0);
   const nextHash=r.data.preview_hash;
