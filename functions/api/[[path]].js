@@ -1,4 +1,4 @@
-// SchoolHub v1.3 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
+// SchoolHub v1.5 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
 const encoder = new TextEncoder();
 const MAX_BODY = 90000;
 const SESSION_SECONDS = 8 * 3600;
@@ -49,13 +49,15 @@ function access(user, ...roles) { if(!user || !roles.includes(user.role)) throw 
 function isAdmin(user) { return user.role==='super_admin'||user.role==='admin'; }
 function canImportExcel(user) { return isAdmin(user) || (user.role==='teacher' && user.can_import_excel===1); }
 function canSyncExcel(user) { return isAdmin(user) || (user.role==='teacher' && user.can_import_excel===1 && user.can_sync_excel===1); }
+function canClubImport(user) { return isAdmin(user) || (user.role==='teacher' && user.can_import_club_excel===1); }
+function canClubSync(user) { return isAdmin(user) || (user.role==='teacher' && user.can_import_club_excel===1 && user.can_sync_club_excel===1); }
 function cookieToken(request) { const m=/(?:^|;\s*)sh_session=([a-f0-9]{64})(?:;|$)/.exec(request.headers.get('cookie')||''); return m?.[1]||null; }
 const cookie = (v, seconds=SESSION_SECONDS) => `sh_session=${v}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${seconds}`;
 async function who(db, request) {
   const token = cookieToken(request);
   if(!token) return null;
   const hashed=await sha256(token);
-  return await db.prepare(`SELECT u.id,u.username,u.display_name,u.role,u.active,u.can_import_excel,u.can_sync_excel
+  return await db.prepare(`SELECT u.id,u.username,u.display_name,u.role,u.active,u.can_import_excel,u.can_sync_excel,u.can_import_club_excel,u.can_sync_club_excel
     FROM sessions s JOIN users u ON s.user_id=u.id
     WHERE s.token_hash=? AND s.expires_at>? AND u.active=1`).bind(hashed,sqlNow()).first();
 }
@@ -102,7 +104,7 @@ async function login(db, request) {
   const token=randomHex(32), expiry=new Date(Date.now()+SESSION_SECONDS*1000).toISOString();
   await db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)')
     .bind(await sha256(token),u.id,expiry,sqlNow()).run();
-  return json({ok:true,user:{id:u.id,username:u.username,display_name:u.display_name,role:u.role,can_import_excel:u.can_import_excel,can_sync_excel:u.can_sync_excel}},200,{'Set-Cookie':cookie(token)});
+  return json({ok:true,user:{id:u.id,username:u.username,display_name:u.display_name,role:u.role,can_import_excel:u.can_import_excel,can_sync_excel:u.can_sync_excel,can_import_club_excel:u.can_import_club_excel,can_sync_club_excel:u.can_sync_club_excel}},200,{'Set-Cookie':cookie(token)});
 }
 async function setup(db,request,env) {
   const p=await body(request);
@@ -368,7 +370,7 @@ async function addUser(db,user,request) {
 }
 async function assignTeacher(db,user,request) {
   access(user,'super_admin','admin');const p=await body(request);
-  const target=await db.prepare("SELECT id,role,can_import_excel,can_sync_excel FROM users WHERE id=? AND role='teacher'").bind(p.user_id).first();
+  const target=await db.prepare("SELECT id,role,can_import_excel,can_sync_excel,can_import_club_excel,can_sync_club_excel FROM users WHERE id=? AND role='teacher'").bind(p.user_id).first();
   if(!target) throw error('ไม่พบบัญชีครู');
   if(!Array.isArray(p.room_ids)||!Array.isArray(p.club_ids)||p.room_ids.length>50||p.club_ids.length>1) throw error('ข้อมูลมอบหมายไม่ถูกต้อง (ครูรับชุมนุมได้หนึ่งชุมนุม)');
   if(p.can_import_excel!==undefined && typeof p.can_import_excel!=='boolean')throw error('สิทธิ์นำเข้า Excel ต้องเป็น true/false');
@@ -376,15 +378,20 @@ async function assignTeacher(db,user,request) {
   const canImport=p.can_import_excel===undefined?!!target.can_import_excel:p.can_import_excel;
   const canSync=p.can_sync_excel===undefined?!!target.can_sync_excel:p.can_sync_excel;
   if(canSync&&!canImport)throw error('ต้องเปิดสิทธิ์นำเข้าก่อน จึงอนุญาตให้ซิงก์ทั้งห้องได้');
+  if(p.can_import_club_excel!==undefined && typeof p.can_import_club_excel!=='boolean')throw error('สิทธิ์นำเข้าสมาชิกชุมนุมต้องเป็น true/false');
+  if(p.can_sync_club_excel!==undefined && typeof p.can_sync_club_excel!=='boolean')throw error('สิทธิ์ซิงก์สมาชิกชุมนุมต้องเป็น true/false');
+  const clubImport=p.can_import_club_excel===undefined?!!target.can_import_club_excel:p.can_import_club_excel;
+  const clubSync=p.can_sync_club_excel===undefined?!!target.can_sync_club_excel:p.can_sync_club_excel;
+  if(clubSync&&!clubImport)throw error('ต้องอนุญาตนำเข้าสมาชิกชุมนุมก่อนเปิดสิทธิ์ซิงก์');
   const roomIds=[...new Set(p.room_ids.map(v=>String(v)))],clubIds=[...new Set(p.club_ids.map(v=>String(v)))];
   for(const r of roomIds)if(!await db.prepare('SELECT 1 AS ok FROM rooms WHERE id=?').bind(r).first())throw error('ไม่พบห้องเรียน '+r);
   for(const c of clubIds)if(!await db.prepare('SELECT 1 AS ok FROM clubs WHERE id=? AND active=1').bind(c).first())throw error('ไม่พบชุมนุม '+c);
   const statements=[db.prepare('DELETE FROM teacher_rooms WHERE user_id=?').bind(target.id),db.prepare('DELETE FROM teacher_clubs WHERE user_id=?').bind(target.id),
-    db.prepare('UPDATE users SET can_import_excel=?,can_sync_excel=? WHERE id=?').bind(canImport?1:0,canSync?1:0,target.id)];
+    db.prepare('UPDATE users SET can_import_excel=?,can_sync_excel=?,can_import_club_excel=?,can_sync_club_excel=? WHERE id=?').bind(canImport?1:0,canSync?1:0,clubImport?1:0,clubSync?1:0,target.id)];
   for(const r of roomIds) statements.push(db.prepare('INSERT INTO teacher_rooms(user_id,room_id) VALUES(?,?)').bind(target.id,r));
   for(const c of clubIds) statements.push(db.prepare('INSERT INTO teacher_clubs(user_id,club_id) VALUES(?,?)').bind(target.id,c));
   statements.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
-    .bind(user.id,'assign','user',target.id,JSON.stringify({rooms:roomIds,clubs:clubIds,can_import_excel:canImport,can_sync_excel:canSync}),sqlNow()));
+    .bind(user.id,'assign','user',target.id,JSON.stringify({rooms:roomIds,clubs:clubIds,can_import_excel:canImport,can_sync_excel:canSync,can_import_club_excel:clubImport,can_sync_club_excel:clubSync}),sqlNow()));
   await db.batch(statements);return {ok:true};
 }
 async function exportStudents(db,user) {
@@ -573,6 +580,225 @@ async function importHistory(db,user){
   return {items:result.results};
 }
 
+
+// Club enrollment import: student records already exist; this module changes ONLY club membership.
+// A preview is not a lock. On commit the plan is recomputed, then transactional guards protect
+// student versions, teacher grants, club capacity and concurrent membership changes.
+function parseClubRows(raw) {
+  if(!Array.isArray(raw)||raw.length<1||raw.length>120)throw error('ไฟล์สมาชิกชุมนุมต้องมี 1–120 คนต่อครั้ง');
+  return raw.map((r,index)=>{
+    if(!r||Array.isArray(r)||typeof r!=='object')throw error(`แถว ${index+2} ไม่ถูกต้อง`);
+    const student_no=cleanString(r.student_no,30),student_name=cleanString(r.student_name,180);
+    const line=r.source_line===undefined?index+2:Number(r.source_line);
+    if(!Number.isInteger(line)||line<2||line>2000)throw error('หมายเลขแถว Excel ไม่ถูกต้อง');
+    return {line,student_no,student_name};
+  });
+}
+const normStudentName=s=>cleanString(s,200).normalize('NFKC').replace(/\s+/g,'').toLocaleLowerCase('th');
+async function clubImportPlan(db,user,p) {
+  if(!canClubImport(user))throw error('บัญชีนี้ไม่ได้รับสิทธิ์นำเข้าสมาชิกชุมนุม',403,'CLUB_IMPORT_PERMISSION');
+  const clubId=required(p.club_id,'ชุมนุม',80),mode=cleanString(p.mode,10);
+  if(!['merge','sync'].includes(mode))throw error('รูปแบบนำเข้าชุมนุมไม่ถูกต้อง');
+  if(mode==='sync'&&!canClubSync(user))throw error('ยังไม่ได้รับสิทธิ์ซิงก์สมาชิกชุมนุม',403,'CLUB_SYNC_PERMISSION');
+  if(!isAdmin(user)&&p.override_capacity===true)throw error('เพิ่มเกินโควตาได้เฉพาะ Admin',403,'FORBIDDEN');
+  if(!await visibleClub(db,user,clubId))throw error('นำเข้าได้เฉพาะชุมนุมที่ได้รับมอบหมาย',403,'CLUB_SCOPE');
+  const club=await db.prepare('SELECT * FROM clubs WHERE id=? AND active=1').bind(clubId).first();
+  if(!club)throw error('ไม่พบชุมนุมที่เปิดใช้งาน');
+  const rows=parseClubRows(p.rows);
+  const [q,allMembers]=await Promise.all([
+    db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.status,s.version,r.year AS room_year,
+        a.student_id AS archived,c.name AS old_club_name
+      FROM students s JOIN rooms r ON r.id=s.room_id LEFT JOIN student_archives a ON a.student_id=s.id
+      LEFT JOIN clubs c ON c.id=s.club_id WHERE s.student_no IN (${rows.map(()=>'?').join(',')})`)
+      .bind(...rows.map(x=>x.student_no)).all(),
+    db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.version
+      FROM students s WHERE s.club_id=? AND s.status='active' AND NOT EXISTS
+      (SELECT 1 FROM student_archives a WHERE a.student_id=s.id) ORDER BY s.student_no`).bind(clubId).all()
+  ]);
+  const byNo=new Map(q.results.map(s=>[s.student_no,s])),members=allMembers.results;
+  const seen=new Map(),items=[],errors=[],ops=[];
+  for(const row of rows) {
+    const s=byNo.get(row.student_no),issues=[];
+    if(!row.student_no)issues.push('ไม่มีเลขประจำตัวนักเรียน');
+    if(row.student_no&&seen.has(row.student_no))issues.push(`เลขประจำตัวซ้ำในไฟล์ (ครั้งแรกแถว ${seen.get(row.student_no)})`);
+    else if(row.student_no)seen.set(row.student_no,row.line);
+    if(!s)issues.push('ไม่พบเลขประจำตัวในทะเบียนนักเรียน ต้องเพิ่มนักเรียนจากเมนูนักเรียนก่อน');
+    if(s&&(s.archived||s.status!=='active'))issues.push('นักเรียนถูกนำออกหรือไม่อยู่ในสถานะใช้งาน');
+    if(s&&s.room_year!==club.year)issues.push('นักเรียนและชุมนุมอยู่คนละปีการศึกษา');
+    const full=s?`${s.prefix} ${s.first_name} ${s.last_name}`.trim():row.student_name;
+    if(s&&row.student_name&&normStudentName(row.student_name)!==normStudentName(full))issues.push(`ชื่อในไฟล์ไม่ตรงกับทะเบียน: ${full}`);
+    const item={line:row.line,student_no:row.student_no,student_name:full||'—'};
+    if(issues.length){const info={...item,action:'error',detail:issues.join(' • ')};items.push(info);errors.push(info);continue;}
+    if(s.club_id===clubId){items.push({...item,action:'unchanged',detail:'เป็นสมาชิกชุมนุมนี้อยู่แล้ว'});continue;}
+    const kind=s.club_id?'move':'add';
+    ops.push({kind,id:s.id,version:s.version,student_no:s.student_no,old_club_id:s.club_id,student_name:full});
+    items.push({...item,action:kind,detail:s.club_id?`ย้ายจาก ${s.old_club_name||'ชุมนุมเดิม'}`:'ยังไม่มีชุมนุม'});
+  }
+  if(mode==='sync')for(const s of members){
+    if(seen.has(s.student_no))continue;
+    const full=`${s.prefix} ${s.first_name} ${s.last_name}`.trim();
+    items.push({line:0,student_no:s.student_no,student_name:full,action:'remove',detail:'ไม่มีในไฟล์ — ถอนจากชุมนุมเท่านั้น (ไม่ลบนักเรียน)'});
+    ops.push({kind:'remove',id:s.id,version:s.version,student_no:s.student_no,old_club_id:clubId});
+  }
+  const adds=ops.filter(x=>['add','move'].includes(x.kind)).length;
+  const removals=ops.filter(x=>x.kind==='remove').length;
+  const current=members.length,next=current+adds-removals;
+  const override=p.override_capacity===true,reason=cleanString(p.reason,200);
+  if(override && reason.length<5)errors.push({line:0,action:'error',detail:'กรุณากรอกเหตุผลอนุญาตเกินโควตาอย่างน้อย 5 ตัวอักษร'});
+  if(mode==='sync'&&reason.length<5)errors.push({line:0,action:'error',detail:'ซิงก์สมาชิกชุมนุมต้องระบุเหตุผลอย่างน้อย 5 ตัวอักษร'});
+  if(club.capacity!==null && next>Number(club.capacity) && next>current && !override)
+    errors.push({line:0,action:'error',detail:`ชุมนุมเต็ม: ปัจจุบัน ${current} คน หลังนำเข้า ${next} คน / โควตา ${club.capacity} คน`,related_students:items.filter(x=>['add','move'].includes(x.action))});
+  const summary={add:items.filter(x=>x.action==='add').length,move:items.filter(x=>x.action==='move').length,
+    remove:items.filter(x=>x.action==='remove').length,unchanged:items.filter(x=>x.action==='unchanged').length,errors:errors.length};
+  const snapshot={club_id:clubId,actor_id:user.id,mode,rows,ops,club:[club.active,club.capacity,club.year],
+    members:members.map(s=>[s.id,s.version]).sort((a,b)=>a[0].localeCompare(b[0])),override,reason};
+  return {club,mode,items,ops,errors,summary,override,reason,members:members.map(s=>({id:s.id,version:s.version})),preview_hash:await sha256(JSON.stringify(snapshot))};
+}
+async function clubImportPreview(db,user,request){const plan=await clubImportPlan(db,user,await body(request));
+  return {ok:!plan.errors.length,club:{id:plan.club.id,name:plan.club.name,capacity:plan.club.capacity},mode:plan.mode,
+    items:plan.items,errors:plan.errors,summary:plan.summary,preview_hash:plan.preview_hash};
+}
+async function clubImportCommit(db,user,request) {
+  const p=await body(request),plan=await clubImportPlan(db,user,p);
+  if(plan.errors.length)throw error('พบข้อผิดพลาดในไฟล์ กรุณาพรีวิวและแก้ไขใหม่',409,'VALIDATION');
+  if(!/^[a-f0-9]{64}$/.test(String(p.preview_hash||''))||p.preview_hash!==plan.preview_hash)
+    throw error('ข้อมูลเปลี่ยนหลังพรีวิว กรุณาตรวจสอบข้อมูลใหม่',409,'STALE');
+  if(plan.mode==='sync' && (p.confirm_club!==plan.club.name||p.acknowledge_removals!==true))
+    throw error('ต้องยืนยันชื่อชุมนุมและการถอนสมาชิกก่อนซิงก์');
+  const now=sqlNow(),runId=id(),stmts=[];
+  // The guard prevents permissions granted at preview from being used after revocation.
+  stmts.push(checkGuard(db,isAdmin(user)?
+    `EXISTS(SELECT 1 FROM clubs WHERE id=? AND active=1)`:
+    `EXISTS(SELECT 1 FROM users u JOIN teacher_clubs tc ON tc.user_id=u.id WHERE u.id=? AND tc.club_id=?
+        AND u.active=1 AND u.can_import_club_excel=1 AND (?='merge' OR u.can_sync_club_excel=1))`,
+    isAdmin(user)?[plan.club.id]:[user.id,plan.club.id,plan.mode]));
+  // Use the previewed snapshot for these guards, never a fresh count read which
+  // could permit an unreviewed concurrent membership addition.
+  for(const m of plan.members)stmts.push(checkGuard(db,`EXISTS(SELECT 1 FROM students WHERE id=? AND version=? AND club_id=?)`,[m.id,m.version,plan.club.id]));
+  stmts.push(checkGuard(db,`(SELECT COUNT(*) FROM students s WHERE s.club_id=? AND s.status='active' AND NOT EXISTS
+        (SELECT 1 FROM student_archives a WHERE a.student_id=s.id))=?`,[plan.club.id,plan.members.length]));
+  for(const op of plan.ops) {
+    const newId=op.kind==='remove'?null:plan.club.id;
+    stmts.push(checkGuard(db,`EXISTS(SELECT 1 FROM students s JOIN rooms r ON r.id=s.room_id WHERE s.id=? AND s.version=? AND s.status='active' AND r.year=?
+       AND s.club_id IS ? AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id))`,
+      [op.id,op.version,plan.club.year,op.old_club_id]));
+    stmts.push(db.prepare('UPDATE students SET club_id=?,version=version+1,updated_at=? WHERE id=? AND version=?')
+      .bind(newId,now,op.id,op.version));
+    stmts.push(db.prepare('INSERT INTO membership_history(student_id,old_club_id,new_club_id,actor_id,reason,at) VALUES(?,?,?,?,?,?)')
+      .bind(op.id,op.old_club_id,newId,user.id,plan.reason||'นำเข้าชุมนุม Excel',now));
+    stmts.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+      .bind(user.id,'club_import_'+op.kind,'student',op.id,JSON.stringify({student_no:op.student_no,from:op.old_club_id,to:newId,run_id:runId}),now));
+  }
+  if(!plan.override && (plan.summary.add+plan.summary.move)>0)stmts.push(checkGuard(db,`(SELECT capacity FROM clubs WHERE id=?) IS NULL OR
+    (SELECT COUNT(*) FROM students s WHERE s.club_id=? AND s.status='active' AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id))
+      <= (SELECT capacity FROM clubs WHERE id=?)`,[plan.club.id,plan.club.id,plan.club.id]));
+  stmts.push(db.prepare(`INSERT INTO club_import_runs(id,actor_id,club_id,mode,preview_hash,added,moved,removed,unchanged,reason,override_capacity,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).bind(runId,user.id,plan.club.id,plan.mode,plan.preview_hash,
+       plan.summary.add,plan.summary.move,plan.summary.remove,plan.summary.unchanged,plan.reason,plan.override?1:0,now));
+  stmts.push(db.prepare('DELETE FROM excel_import_guard'));
+  try{await db.batch(stmts);}catch(e){
+    if(/CHECK constraint failed/i.test(String(e)))throw error('มีการเปลี่ยนแปลงสมาชิก/สิทธิ์/โควตาระหว่างนำเข้า กรุณาพรีวิวใหม่',409,'STALE');
+    throw e;
+  }
+  return {ok:true,run_id:runId,summary:plan.summary,at:now};
+}
+async function clubImportHistory(db,user) {
+  if(!canClubImport(user))throw error('ไม่มีสิทธิ์ดูประวัติการนำเข้าสมาชิกชุมนุม',403);
+  const sql=isAdmin(user)?'1=1':`i.actor_id=?`;
+  const rows=await db.prepare(`SELECT i.*,c.name AS club_name,u.display_name AS actor FROM club_import_runs i
+      JOIN clubs c ON i.club_id=c.id JOIN users u ON i.actor_id=u.id WHERE ${sql} ORDER BY i.created_at DESC LIMIT 30`)
+      .bind(...(isAdmin(user)?[]:[user.id])).all();
+  return {items:rows.results};
+}
+async function exportClubMembers(db,user,url) {
+  const clubId=required(url.searchParams.get('club_id'),'ชุมนุม',80);
+  if(!await visibleClub(db,user,clubId))throw error('ไม่มีสิทธิ์ดูทะเบียนชุมนุมนี้',403);
+  const club=await db.prepare('SELECT name FROM clubs WHERE id=?').bind(clubId).first();
+  if(!club)throw error('ไม่พบชุมนุม',404);
+  const rows=await db.prepare(`SELECT s.student_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no FROM students s
+    JOIN rooms r ON r.id=s.room_id WHERE s.club_id=? AND s.status='active'
+      AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
+      ORDER BY r.grade,r.room_no,s.student_no`).bind(clubId).all();
+  const safe=v=>{const s=String(v??'');return /^[\s]*[=+\-@\t\r]/.test(s)?`'${s}`:s;};
+  const csv=v=>`"${safe(v).replaceAll('"','""')}"`;
+  const records=[['เลขประจำตัวนักเรียน','คำนำหน้า','ชื่อ','นามสกุล','ชั้น','ห้อง','ชุมนุม'].map(csv).join(',')];
+  for(const s of rows.results)records.push([s.student_no,s.prefix,s.first_name,s.last_name,s.grade,s.room_no,club.name].map(csv).join(','));
+  return new Response('\uFEFF'+records.join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8',
+    'Content-Disposition':'attachment; filename="schoolhub-club-members.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+}
+
+// Community service attendance is independent from club membership/club attendance.
+// The default unmarked state is NULL; only มา and สาย count as attendance.
+function dateOnly(value) {
+  const s=cleanString(value,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||!Number.isFinite(Date.parse(s+'T00:00:00Z'))||
+      new Date(s+'T00:00:00Z').toISOString().slice(0,10)!==s)throw error('วันที่กิจกรรมไม่ถูกต้อง ใช้รูปแบบ YYYY-MM-DD');
+  return s;
+}
+async function communityRoom(db,user,roomId) {
+  const room=await db.prepare('SELECT id,year,grade,room_no FROM rooms WHERE id=?').bind(roomId).first();
+  if(!room)throw error('ไม่พบห้องเรียน',404);
+  if(!await visibleRoom(db,user,roomId))throw error('เช็กชื่อได้เฉพาะห้องที่ได้รับมอบหมาย',403,'ROOM_SCOPE');
+  return room;
+}
+async function communityAttendance(db,user,url) {
+  const roomId=required(url.searchParams.get('room_id'),'ห้องเรียน',80),date=dateOnly(url.searchParams.get('date'));
+  const room=await communityRoom(db,user,roomId),sessionId=roomId+'@'+date;
+  const session=await db.prepare('SELECT id,term,created_at FROM community_sessions WHERE id=?').bind(sessionId).first();
+  const rows=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.version AS student_version,
+    a.status,COALESCE(a.version,0) AS attendance_version,a.marked_at,u.display_name AS marked_by
+      FROM students s LEFT JOIN community_attendance a ON a.session_id=? AND a.student_id=s.id
+      LEFT JOIN users u ON u.id=a.marked_by WHERE s.room_id=? AND s.status='active'
+      AND NOT EXISTS(SELECT 1 FROM student_archives ar WHERE ar.student_id=s.id)
+      ORDER BY s.student_no`).bind(sessionId,roomId).all();
+  const counts={มา:0,สาย:0,ลา:0,ขาด:0,ยังไม่ระบุ:0};
+  for(const x of rows.results)counts[x.status||'ยังไม่ระบุ']++;
+  return {room,date,term:session?.term||null,session_created_at:session?.created_at||null,counts,items:rows.results};
+}
+async function communityDates(db,user,url) {
+  const roomId=required(url.searchParams.get('room_id'),'ห้องเรียน',80);
+  await communityRoom(db,user,roomId);
+  const dates=await db.prepare(`SELECT cs.activity_date AS date,cs.term,COUNT(a.student_id) AS marked
+    FROM community_sessions cs LEFT JOIN community_attendance a ON a.session_id=cs.id AND a.status IS NOT NULL
+    WHERE cs.room_id=? GROUP BY cs.id ORDER BY cs.activity_date DESC LIMIT 100`).bind(roomId).all();
+  return {items:dates.results};
+}
+async function communityMark(db,user,request) {
+  const p=await body(request),roomId=required(p.room_id,'ห้องเรียน',80),date=dateOnly(p.date);
+  const room=await communityRoom(db,user,roomId),term=Number(p.term);
+  if(![1,2].includes(term))throw error('กรุณาเลือกภาคเรียน 1 หรือ 2');
+  const studentId=required(p.student_id,'นักเรียน',80);
+  const status=p.status===null||p.status===''?null:cleanString(p.status,12);
+  if(status!==null&&!['มา','สาย','ลา','ขาด'].includes(status))throw error('สถานะเช็กชื่อไม่ถูกต้อง');
+  const v=Number(p.version);
+  if(!Number.isInteger(v)||v<0)throw error('เวอร์ชันเช็กชื่อไม่ถูกต้อง');
+  const sessionId=roomId+'@'+date,now=sqlNow();
+  const current=await db.prepare('SELECT status,version FROM community_attendance WHERE session_id=? AND student_id=?').bind(sessionId,studentId).first();
+  if((current?.version||0)!==v)throw error('ครูอีกคนแก้ไขสถานะแล้ว กรุณาโหลดข้อมูลใหม่',409,'STALE');
+  const statements=[
+    db.prepare(`INSERT OR IGNORE INTO community_sessions(id,room_id,activity_date,term,created_by,created_at) VALUES(?,?,?,?,?,?)`)
+      .bind(sessionId,roomId,date,term,user.id,now),
+    checkGuard(db,`EXISTS(SELECT 1 FROM students s JOIN rooms r ON r.id=s.room_id WHERE s.id=? AND s.room_id=? AND r.year=?
+      AND s.status='active' AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id))`,[studentId,roomId,room.year]),
+    checkGuard(db,`EXISTS(SELECT 1 FROM community_sessions WHERE id=? AND term=?)`,[sessionId,term]),
+    checkGuard(db,`COALESCE((SELECT version FROM community_attendance WHERE session_id=? AND student_id=?),0)=?`,[sessionId,studentId,v]),
+  ];
+  if(!isAdmin(user))statements.push(checkGuard(db,`EXISTS(SELECT 1 FROM teacher_rooms tr JOIN users u ON u.id=tr.user_id
+    WHERE tr.room_id=? AND tr.user_id=? AND u.active=1)`,[roomId,user.id]));
+  statements.push(db.prepare(`INSERT INTO community_attendance(session_id,student_id,status,version,marked_by,marked_at)
+    VALUES(?,?,?,1,?,?) ON CONFLICT(session_id,student_id) DO UPDATE SET
+    status=excluded.status,version=community_attendance.version+1,marked_by=excluded.marked_by,marked_at=excluded.marked_at`)
+    .bind(sessionId,studentId,status,user.id,now));
+  statements.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+    .bind(user.id,'community_attendance_mark','community_attendance',sessionId+':'+studentId,
+      JSON.stringify({room_id:roomId,date,term,student_id:studentId,old_status:current?.status||null,status}),now));
+  statements.push(db.prepare('DELETE FROM excel_import_guard'));
+  try{await db.batch(statements);}catch(e){
+    if(/CHECK constraint failed/i.test(String(e)))throw error('ข้อมูลหรือสิทธิ์เปลี่ยนไปแล้ว กรุณาโหลดเช็กชื่อใหม่',409,'STALE');
+    throw e;
+  }
+  return {ok:true,version:v+1,status,marked_at:now};
+}
 export async function onRequest({request,env}) {
   const url=new URL(request.url), route=url.pathname.replace(/^\/api\/?/,'').replace(/\/+$/,'');
   try {
@@ -585,7 +811,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.4.0'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.5.0'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -604,6 +830,14 @@ export async function onRequest({request,env}) {
       ]);
       return json({ok:true,login_again:true},200,{'Set-Cookie':cookie('',0)});
     }
+    if(route==='club-import/allowed') {requireMethod(request.method,'GET');if(!canClubImport(user))throw error('ไม่ได้รับสิทธิ์นำเข้าชุมนุม',403);const items=await db.prepare(`SELECT c.id,c.name,c.capacity,c.active,c.year,COUNT(s.id) AS members FROM clubs c LEFT JOIN students s ON s.club_id=c.id AND s.status='active' AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id) WHERE c.active=1 AND ${isAdmin(user)?'1=1':'c.id IN(SELECT club_id FROM teacher_clubs WHERE user_id=?)'} GROUP BY c.id ORDER BY c.name`).bind(...(isAdmin(user)?[]:[user.id])).all();return json({items:items.results});}
+    if(route==='club-import/preview') {requireMethod(request.method,'POST');return json(await clubImportPreview(db,user,request));}
+    if(route==='club-import/commit') {requireMethod(request.method,'POST');return json(await clubImportCommit(db,user,request));}
+    if(route==='club-import/history') {requireMethod(request.method,'GET');return json(await clubImportHistory(db,user));}
+    if(route==='export/club-members') {requireMethod(request.method,'GET');return await exportClubMembers(db,user,url);}
+    if(route==='community/attendance') {requireMethod(request.method,'GET');return json(await communityAttendance(db,user,url));}
+    if(route==='community/dates') {requireMethod(request.method,'GET');return json(await communityDates(db,user,url));}
+    if(route==='community/mark') {requireMethod(request.method,'POST');return json(await communityMark(db,user,request));}
     if(route==='import/preview') {requireMethod(request.method,'POST');return json(await importPreview(db,user,request));}
     if(route==='import/commit') {requireMethod(request.method,'POST');return json(await importCommit(db,user,request));}
     if(route==='import/history') {requireMethod(request.method,'GET');return json(await importHistory(db,user));}

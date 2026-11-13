@@ -2,6 +2,8 @@
 // No CDN, third-party parser, upload of workbook bytes, or Excel macro execution.
 const FIELDS=['student_no','prefix','first_name','last_name','club_name'];
 const HEADERS=['เลขประจำตัวนักเรียน','คำนำหน้า','ชื่อ','นามสกุล','ชุมนุม'];
+const CLUB_HEADERS=['เลขประจำตัวนักเรียน','ชื่อ-นามสกุล (ตรวจสอบ)'];
+const CLUB_FIELDS=['student_no','student_name'];
 const MAX_FILE=4*1024*1024, MAX_XML=10*1024*1024;
 const utf8=new TextDecoder('utf-8');
 function fail(msg){throw new Error(msg);}
@@ -45,7 +47,7 @@ function xmlDoc(s){if(/<!DOCTYPE/i.test(s))fail('ไฟล์ XML มีส่�
 function nodes(parent,name){return [...parent.getElementsByTagName('*')].filter(el=>el.localName===name);}
 function child(el,name){return [...el.children].find(x=>x.localName===name)||null;}
 function xref(ref){const m=/^([A-Z]+)(\d+)$/i.exec(ref||'');if(!m)return null;let col=0;for(const letter of m[1].toUpperCase())col=col*26+letter.charCodeAt(0)-64;return {col:col-1,row:Number(m[2])};}
-async function xlsxRows(buffer){
+async function xlsxRows(buffer,schema='student'){
  const entries=zipFiles(buffer);
  const book=xmlDoc(await readMember(entries,'xl/workbook.xml'));
  const sheets=nodes(book,'sheet');if(!sheets.length)fail('ไฟล์ไม่มี Worksheet');
@@ -74,19 +76,20 @@ async function xlsxRows(buffer){
   data.push({rowNo,values});
  }
  if(formulaFound)fail('ไม่รองรับสูตร Excel ในคอลัมน์นำเข้า กรุณาแปลงเป็นข้อความก่อน');
- return mapRows(data);
+ return mapRows(data,schema);
 }
-function mapRows(sheetRows){
+function mapRows(sheetRows,schema='student'){
+ const headers=schema==='club'?CLUB_HEADERS:HEADERS,fields=schema==='club'?CLUB_FIELDS:FIELDS;
  const first=sheetRows.find(r=>r.values.some(v=>String(v).trim()))?.values;
- if(!first || HEADERS.some((header,i)=>String(first[i]??'').trim()!==header))
-   fail('หัวคอลัมน์ไม่ตรงแบบฟอร์ม v1.3 กรุณาดาวน์โหลดแบบฟอร์มและจัดเรียง: '+HEADERS.join(', '));
+ if(!first || headers.some((header,i)=>String(first[i]??'').trim()!==header))
+   fail('หัวคอลัมน์ไม่ตรงแบบฟอร์ม กรุณาดาวน์โหลดแบบฟอร์มและจัดเรียง: '+headers.join(', '));
  const firstIndex=sheetRows.findIndex(r=>r.values.some(v=>String(v).trim()));
- const rows=sheetRows.slice(firstIndex+1).filter(r=>r.values.some(v=>String(v).trim())).map(r=>({...Object.fromEntries(FIELDS.map((key,i)=>[key,String(r.values[i]??'').trim()])),source_line:r.rowNo}));
+ const rows=sheetRows.slice(firstIndex+1).filter(r=>r.values.some(v=>String(v).trim())).map(r=>({...Object.fromEntries(fields.map((key,i)=>[key,String(r.values[i]??'').trim()])),source_line:r.rowNo}));
  if(!rows.length)fail('ไฟล์ไม่มีข้อมูลนักเรียน กรุณากรอกข้อมูลก่อน');
  if(rows.length>120)fail('จำกัดการนำเข้าไม่เกิน 120 คนต่อครั้ง');
  return rows;
 }
-function parseCsv(text){
+function parseCsv(text,schema='student'){
  text=text.replace(/^\uFEFF/,'');const delimiter=text.split(/\r?\n/,1)[0].includes('\t')?'\t':text.split(/\r?\n/,1)[0].includes(';')?';':',';
  const result=[],rows=[];let cell='',record=[],quoted=false;
  for(let i=0;i<text.length;i++){
@@ -97,11 +100,19 @@ function parseCsv(text){
  }
  if(quoted)fail('CSV มีเครื่องหมายคำพูดไม่ครบ');
  if(cell||record.length){record.push(cell);rows.push(record);}
- rows.forEach((values,i)=>result.push({rowNo:i+1,values}));return mapRows(result);
+ rows.forEach((values,i)=>result.push({rowNo:i+1,values}));return mapRows(result,schema);
 }
 export async function readSchoolImport(file){
  if(!file)fail('กรุณาเลือกไฟล์');if(file.size>MAX_FILE)fail('ไฟล์ใหญ่เกิน 4 MB');
  const name=file.name.toLowerCase();if(name.endsWith('.xlsx'))return await xlsxRows(await file.arrayBuffer());
  if(name.endsWith('.csv'))return parseCsv(await file.text());
+ fail('รองรับเฉพาะ .xlsx หรือ .csv เท่านั้น');
+}
+
+// Club form uses existing student numbers; never creates student records.
+export async function readSchoolClubImport(file){
+ if(!file)fail('กรุณาเลือกไฟล์');if(file.size>MAX_FILE)fail('ไฟล์ใหญ่เกิน 4 MB');
+ const name=file.name.toLowerCase();if(name.endsWith('.xlsx'))return await xlsxRows(await file.arrayBuffer(),'club');
+ if(name.endsWith('.csv'))return parseCsv(await file.text(),'club');
  fail('รองรับเฉพาะ .xlsx หรือ .csv เท่านั้น');
 }

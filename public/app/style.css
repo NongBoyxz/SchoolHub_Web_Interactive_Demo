@@ -44,3 +44,10 @@
 .import-permission-card{padding:14px;background:#f8fbff;border:1px solid #d8e5f5;gap:10px}
 .import-permission-card .checkbox-inline{display:flex;align-items:center;gap:9px}
 .import-permission-card .checkbox-inline input{width:18px;height:18px;flex:0 0 auto}
+
+/* v1.5 — separate community-service attendance, club import */
+.attendance-table select.att-status{min-width:135px;max-width:170px;padding:8px;font-weight:700;border-radius:9px}
+.attendance-table tr:has(select[value="ขาด"]){background:#fff9f1}
+.attendance-day-chips{display:flex;gap:8px;flex-wrap:wrap}
+.attendance-table td{white-space:normal}
+@media(max-width:800px){.attendance-table td,.attendance-table th{padding:10px 8px}.attendance-table select.att-status{min-width:106px}}

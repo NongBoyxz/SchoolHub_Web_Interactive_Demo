@@ -8,6 +8,7 @@ sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),
 sqlite.exec(readFileSync(new URL('../migrations/0002_student_archives.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0003_excel_import.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0004_teacher_excel_permissions.sql',import.meta.url),'utf8'));
+sqlite.exec(readFileSync(new URL('../migrations/0005_club_import_community_attendance.sql',import.meta.url),'utf8'));
 const db={
  prepare(sql){let stmt=sqlite.prepare(sql), args=[];
    const wrap={bind(...v){args=v;return wrap;},first(){return stmt.get(...args)??null;},all(){return {results:stmt.all(...args)};},run(){return {meta:{changes:stmt.run(...args).changes}};}};
@@ -212,4 +213,99 @@ test('v1.4 teacher Excel permissions: default deny, room scope, sync and overrid
   r=await call('auth/me','GET',null,tCookie);assert.equal(r.data.user.can_import_excel,0);
   r=await call('students?room_id=2569-4-1','GET',null,session);assert.ok(!r.data.items.some(x=>x.student_no==='T-403'));
   r=await call('import/history','GET',null,tCookie);assert.equal(r.status,403);
+});
+
+test('v1.5 club Excel import: scope, missing student, named validation, merge, sync, audit and revoke',async()=>{
+  let r=await call('clubs','POST',{name:'ชุมนุม v15',year:2569,capacity:2},session);
+  assert.equal(r.status,201);const targetClub=r.data.id;
+  const extra=[];
+  for(let n=1;n<=3;n++){
+    r=await call('students','POST',{student_no:'V15-00'+n,prefix:'เด็กชาย',first_name:'ตัวอย่าง'+n,last_name:'ทดสอบ',room_id:'2569-5-1'},session);
+    assert.equal(r.status,201);extra.push(r.data.id);
+  }
+  r=await call('users','POST',{username:'advisor15',display_name:'ครูชุมนุม v15',role:'teacher',password:'test-password-advisor-15'},session);
+  assert.equal(r.status,201);const advisorId=r.data.id;
+  r=await call('auth/login','POST',{username:'advisor15',password:'test-password-advisor-15'});
+  assert.equal(r.status,200);const advCookie=r.cookie.split(';')[0];
+  r=await call('club-import/allowed','GET',null,advCookie);assert.equal(r.status,403);
+  r=await call('assignments','POST',{user_id:advisorId,room_ids:[],club_ids:[targetClub],can_import_club_excel:true,can_sync_club_excel:false},session);
+  assert.equal(r.status,200);
+  r=await call('club-import/allowed','GET',null,advCookie);
+  assert.deepEqual(r.data.items.map(x=>x.id),[targetClub]);
+  const row=(student_no,student_name='')=>({student_no,student_name});
+  const base={club_id:targetClub,mode:'merge',rows:[row('V15-001'),row('V15-002')]};
+  r=await call('club-import/preview','POST',{...base,mode:'sync',reason:'ต้องตรวจสอบอีกครั้ง'},advCookie);
+  assert.equal(r.status,403,'teacher cannot sync without grant');
+  r=await call('club-import/preview','POST',{...base,override_capacity:true,reason:'เกินโควตาต้องห้าม'},advCookie);
+  assert.equal(r.status,403);
+  r=await call('club-import/preview','POST',{...base,rows:[row('V15-001'),row('V15-001')]},advCookie);
+  assert.equal(r.status,200);assert.equal(r.data.summary.errors,1);
+  assert.match(r.data.errors[0].detail,/ซ้ำ/);
+  r=await call('club-import/preview','POST',{...base,rows:[row('NO_SUCH_STUDENT')]},advCookie);
+  assert.equal(r.data.summary.errors,1);
+  r=await call('club-import/preview','POST',{...base,rows:[row('V15-001','ผิดชื่อแน่นอน')]},advCookie);
+  assert.equal(r.data.summary.errors,1);
+  r=await call('club-import/preview','POST',base,advCookie);
+  assert.equal(r.status,200);assert.equal(r.data.summary.add,2);assert.equal(r.data.summary.errors,0);
+  let committed=await call('club-import/commit','POST',{...base,preview_hash:r.data.preview_hash},advCookie);
+  assert.equal(committed.status,200,JSON.stringify(committed.data));
+  r=await call('club-import/commit','POST',{...base,preview_hash:r.data.preview_hash},advCookie);
+  assert.equal(r.status,409,'cannot commit same plan twice');
+  r=await call('clubs','GET',null,session);assert.equal(r.data.items.find(c=>c.id===targetClub).members,2);
+  r=await call('club-import/preview','POST',{...base,rows:[row('V15-003')]},advCookie);
+  assert.ok(r.data.summary.errors>0,'teacher cannot exceed capacity');
+  // Teacher permission and club assignment are enforced at commit, not just preview.
+  const sync={club_id:targetClub,mode:'sync',reason:'ปรับเปลี่ยนสมาชิกชุมนุม',rows:[row('V15-001')]};
+  r=await call('assignments','POST',{user_id:advisorId,room_ids:[],club_ids:[targetClub],can_import_club_excel:true,can_sync_club_excel:true},session);
+  assert.equal(r.status,200);
+  r=await call('club-import/preview','POST',sync,advCookie);
+  assert.equal(r.status,200);assert.equal(r.data.summary.remove,1);
+  committed=await call('club-import/commit','POST',{...sync,preview_hash:r.data.preview_hash,confirm_club:'WRONG',acknowledge_removals:true},advCookie);
+  assert.equal(committed.status,400);
+  committed=await call('club-import/commit','POST',{...sync,preview_hash:r.data.preview_hash,confirm_club:'ชุมนุม v15',acknowledge_removals:true},advCookie);
+  assert.equal(committed.status,200,JSON.stringify(committed.data));
+  r=await call('students?room_id=2569-5-1','GET',null,session);
+  assert.equal(r.data.items.find(s=>s.student_no==='V15-002').club_id,null,'sync removes membership only');
+  r=await call('club-import/history','GET',null,advCookie);assert.equal(r.status,200);assert.equal(r.data.items.length,2);
+  r=await call('club-import/allowed','GET',null,advCookie);assert.equal(r.data.items[0].members,1);
+  r=await call('export/club-members?club_id='+encodeURIComponent(targetClub),'GET',null,advCookie);
+  assert.equal(r.status,200);assert.ok(r.data.includes('V15-001'));assert.ok(!r.data.includes('V15-002'));
+  r=await call('club-import/preview','POST',{...base,rows:[row('V15-003')]},advCookie);
+  assert.equal(r.status,200);const hash=r.data.preview_hash;
+  r=await call('assignments','POST',{user_id:advisorId,room_ids:[],club_ids:[targetClub],can_import_club_excel:false,can_sync_club_excel:false},session);
+  assert.equal(r.status,200);
+  committed=await call('club-import/commit','POST',{...base,rows:[row('V15-003')],preview_hash:hash},advCookie);
+  assert.equal(committed.status,403);
+});
+
+test('v1.5 community attendance: homeroom scope, date, four statuses, stale update, absent vs unmarked, audit',async()=>{
+  let r=await call('auth/login','POST',{username:'teacher1',password:'teacher-pass-2026'});
+  assert.equal(r.status,200);const teach=r.cookie.split(';')[0];
+  const url='community/attendance?room_id=2569-1-1&date=2026-11-12';
+  r=await call(url,'GET',null,teach);assert.equal(r.status,200);
+  assert.ok(r.data.items.length>=1);const target=r.data.items.find(s=>s.student_no==='12355');assert.ok(target);
+  assert.equal(target.status,null);assert.equal(r.data.counts['ยังไม่ระบุ'],r.data.items.length);
+  const payload={room_id:'2569-1-1',date:'2026-11-12',term:2,student_id:target.id,status:'มา',version:0};
+  r=await call('community/mark','POST',payload,teach);assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.version,1);
+  r=await call('community/mark','POST',payload,teach);assert.equal(r.status,409,'stale data must not override');
+  r=await call(url,'GET',null,session);assert.equal(r.data.counts['มา'],1);assert.equal(r.data.term,2);
+  const testStatuses=['สาย','ลา','ขาด',null];let v=1;
+  for(const st of testStatuses){
+    const res=await call('community/mark','POST',{...payload,status:st,version:v++},session);
+    assert.equal(res.status,200,JSON.stringify(res.data));
+  }
+  r=await call(url,'GET',null,teach);assert.equal(r.data.items.find(s=>s.id===target.id).status,null);
+  assert.equal(r.data.counts['ยังไม่ระบุ'],r.data.items.length);
+  r=await call('community/dates?room_id=2569-1-1','GET',null,teach);
+  assert.equal(r.status,200);assert.equal(r.data.items[0].date,'2026-11-12');
+  r=await call('community/mark','POST',{...payload,term:1,status:'ขาด',version:v},session);
+  assert.equal(r.status,409,'cannot silently reassign session term');
+  r=await call('community/mark','POST',{...payload,date:'2026-02-31',status:'มา',version:0},session);
+  assert.equal(r.status,400);
+  r=await call('community/mark','POST',{...payload,status:'ไม่มา',version:v},session);
+  assert.equal(r.status,400);
+  // Teacher can only access assigned homerooms, not arbitrary clubs or rooms.
+  r=await call('community/attendance?room_id=2569-5-1&date=2026-11-12','GET',null,teach);assert.equal(r.status,403);
+  r=await call('community/mark','POST',{...payload,room_id:'2569-5-1',version:0},teach);assert.equal(r.status,403);
+  r=await call('audit','GET',null,session);assert.ok(r.data.items.some(x=>x.action==='community_attendance_mark'));
 });
