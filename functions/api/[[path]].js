@@ -147,7 +147,7 @@ async function listStudents(db,user,url) {
   const clubId=cleanString(url.searchParams.get('club_id'),80), page=Math.max(1,Math.min(1000,Number(url.searchParams.get('page'))||1));
   const limit=50, where=["s.status='active'",'NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id)']; const args=[];
   if(!isAdmin(user)) {where.push(`(s.room_id IN(SELECT room_id FROM teacher_rooms WHERE user_id=?) OR s.club_id IN(SELECT club_id FROM teacher_clubs WHERE user_id=?))`); args.push(user.id,user.id);}
-  if(q){where.push(`(s.student_no LIKE ? OR s.first_name LIKE ? OR s.last_name LIKE ?)`); args.push(`%${q}%`,`%${q}%`,`%${q}%`);}
+  if(q){where.push(`(s.student_no LIKE ? OR s.first_name LIKE ? OR s.last_name LIKE ? OR (s.prefix||' '||s.first_name||' '||s.last_name) LIKE ?)`); args.push(`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`);}
   if(roomId){where.push('s.room_id=?'); args.push(roomId);}
   if(clubId){where.push('s.club_id=?'); args.push(clubId);}
   const stmt=db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.status,s.version,
@@ -156,7 +156,70 @@ async function listStudents(db,user,url) {
     FROM students s JOIN rooms r ON r.id=s.room_id LEFT JOIN clubs c ON c.id=s.club_id
     WHERE ${where.join(' AND ')} ORDER BY r.grade,r.room_no,s.student_no LIMIT ? OFFSET ?`);
   const rows=await stmt.bind(isAdmin(user)?1:0,user.id,...args,limit,(page-1)*limit).all();
-  return {items:rows.results,page,page_size:limit};
+  const total=await db.prepare(`SELECT COUNT(*) AS n FROM students s WHERE ${where.join(' AND ')}`).bind(...args).first();
+  return {items:rows.results,page,page_size:limit,total:total?.n||0};
+}
+
+// These endpoints return only the records permitted for the signed-in account.
+// Never include student names/IDs in public HTML, JS, or workbook templates.
+async function dashboardRooms(db,user) {
+ const scope=isAdmin(user)?'1=1':'r.id IN(SELECT room_id FROM teacher_rooms WHERE user_id=?)';
+ const args=isAdmin(user)?[]:[user.id];
+ const rows=await db.prepare(`SELECT r.id,r.grade,r.room_no,r.year,COUNT(s.id) AS students
+   FROM rooms r LEFT JOIN students s ON s.room_id=r.id AND s.status='active'
+     AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
+   WHERE r.year=(SELECT label FROM academic_years WHERE is_current=1 LIMIT 1) AND ${scope}
+   GROUP BY r.id ORDER BY r.grade,r.room_no`).bind(...args).all();
+ return {items:rows.results};
+}
+async function formsOptions(db,user) {
+ const rooms=await db.prepare(`SELECT r.id,r.grade,r.room_no,r.year FROM rooms r
+   WHERE r.year=(SELECT label FROM academic_years WHERE is_current=1 LIMIT 1) AND ${isAdmin(user)?'1=1':'r.id IN(SELECT room_id FROM teacher_rooms WHERE user_id=?)'}
+   ORDER BY r.grade,r.room_no`).bind(...(isAdmin(user)?[]:[user.id])).all();
+ const clubs=await db.prepare(`SELECT c.id,c.name,c.year FROM clubs c WHERE c.active=1
+   AND ${isAdmin(user)?'1=1':'c.id IN(SELECT club_id FROM teacher_clubs WHERE user_id=?)'}
+   ORDER BY c.name`).bind(...(isAdmin(user)?[]:[user.id])).all();
+ return {rooms:rooms.results,clubs:clubs.results};
+}
+async function formsData(db,user,url) {
+ const kind=required(url.searchParams.get('kind'),'ประเภทกิจกรรม',30);
+ if(!['club','community','other'].includes(kind))throw error('ประเภทแบบฟอร์มไม่ถูกต้อง');
+ const targetId=required(url.searchParams.get('id'),'ห้องหรือชุมนุม',80);
+ const term=Number(url.searchParams.get('term')||2);
+ if(![1,2].includes(term))throw error('ภาคเรียนไม่ถูกต้อง');
+ let label='',year=2569,roster;
+ if(kind==='club') {
+   const club=await db.prepare('SELECT id,name,year,active FROM clubs WHERE id=?').bind(targetId).first();
+   if(!club||!club.active)throw error('ไม่พบชุมนุมที่เปิดใช้งาน',404);
+   if(!await visibleClub(db,user,targetId))throw error('ไม่มีสิทธิ์ดาวน์โหลดรายชื่อนักเรียนของชุมนุมนี้',403,'FORBIDDEN');
+   label=club.name;year=club.year;
+   roster=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no
+     FROM students s JOIN rooms r ON r.id=s.room_id WHERE s.club_id=? AND s.status='active'
+     AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
+     ORDER BY r.grade,r.room_no,s.student_no LIMIT 2000`).bind(targetId).all();
+ } else {
+   const room=await db.prepare('SELECT id,year,grade,room_no FROM rooms WHERE id=?').bind(targetId).first();
+   if(!room)throw error('ไม่พบห้องเรียน',404);
+   if(!await visibleRoom(db,user,targetId))throw error('ไม่มีสิทธิ์ดาวน์โหลดรายชื่อห้องนี้',403,'FORBIDDEN');
+   label=`ม.${room.grade}/${room.room_no}`;year=room.year;
+   roster=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no
+     FROM students s JOIN rooms r ON r.id=s.room_id WHERE s.room_id=? AND s.status='active'
+     AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
+     ORDER BY s.student_no LIMIT 2000`).bind(targetId).all();
+ }
+ const sessions=[];let sessionCount=0;
+ if(kind==='community') {
+   const seen=await db.prepare(`SELECT cs.id,cs.activity_date AS date FROM community_sessions cs
+     WHERE cs.room_id=? AND cs.term=? ORDER BY cs.activity_date ASC LIMIT 200`).bind(targetId,term).all();
+   sessionCount=seen.results.length;
+   // Absence of a row means 'ยังไม่ระบุ', NOT absence from school.
+   for(const day of seen.results.slice(0,20)) {
+     const statuses=await db.prepare(`SELECT a.student_id,a.status FROM community_attendance a
+        WHERE a.session_id=? AND a.status IS NOT NULL`).bind(day.id).all();
+     sessions.push({date:day.date,marks:statuses.results});
+   }
+ }
+ return {kind,label,year,term,students:roster.results,sessions,sessionCount};
 }
 async function createStudent(db,user,request) {
   const p=await body(request);
@@ -811,7 +874,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.5.0'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.0'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -841,6 +904,9 @@ export async function onRequest({request,env}) {
     if(route==='import/preview') {requireMethod(request.method,'POST');return json(await importPreview(db,user,request));}
     if(route==='import/commit') {requireMethod(request.method,'POST');return json(await importCommit(db,user,request));}
     if(route==='import/history') {requireMethod(request.method,'GET');return json(await importHistory(db,user));}
+    if(route==='dashboard/rooms') {requireMethod(request.method,'GET');return json(await dashboardRooms(db,user));}
+    if(route==='forms/options') {requireMethod(request.method,'GET');return json(await formsOptions(db,user));}
+    if(route==='forms/data') {requireMethod(request.method,'GET');return json(await formsData(db,user,url));}
     if(route==='dashboard') {requireMethod(request.method,'GET');return json(await getDashboard(db,user));}
     if(route==='rooms') {requireMethod(request.method,'GET');return json({items:await listRooms(db,user)});}
     if(route==='clubs' && request.method==='GET')return json({items:await listClubs(db,user)});

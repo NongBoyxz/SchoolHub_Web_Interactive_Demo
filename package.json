@@ -1,12 +1,12 @@
 {
   "name": "schoolhub-cloudflare-pages",
   "private": true,
-  "version": "1.5.0",
+  "version": "1.6.0",
   "type": "module",
   "scripts": {
     "dev": "node tests/local-server.mjs",
     "build": "node scripts/build.mjs",
-    "check": "node --check 'functions/api/[[path]].js' && node --check public/app/app.js && node --check public/app/xlsx-reader.js",
+    "check": "node --check 'functions/api/[[path]].js' && node --check public/app/app.js && node --check public/app/xlsx-reader.js && node --check public/app/form-xlsx.js",
     "test": "node --test tests/*.test.mjs"
   },
   "devDependencies": {}

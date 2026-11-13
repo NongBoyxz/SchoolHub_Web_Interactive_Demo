@@ -1,54 +1,19 @@
-# SchoolHub Cloudflare v1.5.0 — โรงเรียนเทพศาลาประชาสรรค์
+# SchoolHub Cloudflare v1.6 — โรงเรียนเทพศาลาประชาสรรค์
 
-> อัปเดตต่อจาก **v1.4.0** สำหรับ GitHub Repository `NongBoyxz/SchoolHub_Web_Interactive_Demo` และ Cloudflare Pages โปรเจกต์ **schoolhub-v11-staging** โดยใช้ D1 **schoolhub-staging** เดิม
+This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` binding. Do not commit database exports, real student rosters, access tokens, or user passwords.
 
-## ฟังก์ชันเพิ่มใหม่
+## Changes in 1.6
 
-### A. นำเข้าสมาชิกชุมนุมผ่าน Excel
-- เมนู **นำเข้าสมาชิกชุมนุม** พร้อมดาวน์โหลดแบบฟอร์ม XLSX / อ่าน XLSX และ CSV ในเบราว์เซอร์
-- อ้างอิงนักเรียนด้วยเลขประจำตัวที่อยู่ในฐานข้อมูลแล้ว **ไม่สร้างนักเรียนใหม่อัตโนมัติ**
-- Preview บอกแถว เลขประจำตัว ชื่อ และผล: เพิ่มสมาชิก / ย้ายชุมนุม / ไม่เปลี่ยน / ผิดพลาด / ถอนออก
-- สองโหมด: **เพิ่ม/ย้ายเท่านั้น** และ **ซิงก์สมาชิกชุมนุม** (ถอนสมาชิกที่ไม่มีในไฟล์ออกจากชุมนุม แต่ **ไม่ลบนักเรียน**)
-- ครูที่ปรึกษาใช้ได้เฉพาะชุมนุมที่รับผิดชอบ และเมื่อผู้ดูแลเปิด `can_import_club_excel`; โหมดซิงก์ต้องได้รับ `can_sync_club_excel` เพิ่มต่างหาก
-- Admin/Super Admin ใช้งานได้ทุกชุมนุม และอนุญาตเกินโควตาพร้อมเหตุผลอย่างน้อย 5 ตัวอักษร
-- ตรวจข้อมูลซ้ำ ชื่อไม่ตรงทะเบียน ข้ามปีการศึกษา โควตา และการเปลี่ยนแปลง/เพิกถอนสิทธิ์ระหว่างพรีวิว
-- ประวัติการนำเข้าและสมาชิกถูกบันทึกใน `club_import_runs`, `membership_history`, `audit_log`
-- ส่งออกทะเบียนสมาชิกแต่ละชุมนุมเป็น UTF-8 CSV
+1. Counts for all filtered student search results.
+2. Student totals by room in Dashboard, respecting role permissions.
+3. Nontechnical end-user Login.
+4. Manual entry mode in student and club Excel-import preview/commit flows.
+5. Activity-form download derived from the user's supplied original `ตารางเช็คเวลาเรียน 2.69.xlsx`, in blank or populated mode. PDF output, club attendance and assessment are **not yet** supported.
 
-### B. เมนู **กิจกรรมบำเพ็ญประโยชน์**
-- เลือก **ห้องเรียน + วันที่ (YYYY-MM-DD) + ภาคเรียน** และเช็กชื่อนักเรียนที่ยังใช้งานอยู่
-- สถานะ **มา / สาย / ลา / ขาด** และ **ยังไม่ระบุ** (ยังไม่ระบุไม่ถือเป็นขาด)
-- การมาเรียนเบื้องต้น: **มา + สาย** เท่านั้นที่นับเป็นเข้าร่วม; การตัดสินผ่าน/ไม่ผ่านจะเพิ่มในเวอร์ชันถัดไป
-- ครูประจำชั้นที่ถูกมอบหมายทุกคนเช็กชื่อห้องนั้นได้; Admin/Super Admin เช็กได้ทุกห้อง
-- เช็กชื่อรายคนบันทึกอัตโนมัติลง D1; ตรวจเวอร์ชันป้องกันแก้ทับเมื่อครูเปิดข้อมูลเดียวกัน
-- เก็บแยกเป็นแต่ละวันและแต่ละห้อง พร้อมหน้าดูวันเก่าและส่งออก CSV ของวันนั้น
-- ไม่ปะปนกับทะเบียนสมาชิกชุมนุมหรือการเช็กชื่อชุมนุมในอนาคต
+The bundled blank original is `public/templates/SchoolHub_Attendance_2_69_Original.xlsx`; its six worksheets are preserved in generated XLSX. A roster per club/room is fetched from D1 only after authorization. Community attendance is included only where actually recorded. Up to 41 students fit on one worksheet; a multi-page roster downloads as a ZIP of several XLSX files. Dates are not inferred from a hardcoded template; set a start date or use saved community session dates.
 
-## ขอบเขตสำคัญ
-- ยังไม่มีปฏิทินกลาง 20 สัปดาห์ / วันงดกิจกรรม / หน้ากำหนดหน้าต่างเวลาแก้ย้อนหลัง / ประเมินผลรายภาคเรียน
-- การเช็กชื่อบำเพ็ญประโยชน์ขณะนี้แสดงนักเรียนที่ **อยู่ในห้องปัจจุบัน**; การดูประวัติย้อนหลังขณะนักเรียนย้ายห้องต้องเพิ่มหน้ารายงานอีกขั้น (ข้อมูลดิบยังอยู่ใน D1)
-- การนำเข้าสมาชิกชุมนุมครั้งละ 1 ชุมนุม ไม่เกิน 120 คนต่อครั้ง; ไฟล์ XLSX ดิบไม่ถูกส่งไปบันทึกในฐานข้อมูล
-- v1.5 ยังไม่ใช่การตรวจรับด้านความปลอดภัยสำหรับข้อมูลจริงทั้งโรงเรียน โปรดทดลอง Staging ด้วยข้อมูลสมมติและสำรอง D1 ก่อนเสมอ
+## Upgrade
 
-## ติดตั้ง
-อ่าน **INSTALL_TH_v1.5.md** (ใน ZIP) ก่อนดำเนินการ รัน `migrations/0005_club_import_community_attendance.sql` **เพียงครั้งเดียว** หลังสำรอง D1 และก่อน Deploy โค้ดใหม่
+No migration is necessary from v1.5.0; **never rerun the earlier real-data reset importer**. Verify the existing `DB` binding and Back up D1 before deploying. Copy the `update/` directory into the existing Git checkout, run `npm run check && npm test`, then push the testing branch.
 
-### โครงสร้างสำคัญ
-- `functions/api/[[path]].js` — Routes for Club Import and Community Attendance
-- `public/app/` — UI JavaScript, spreadsheet reader, CSS
-- `public/templates/SchoolHub_Club_Members_v1.5.xlsx` — XLSX template ข้อมูลสมมติเท่านั้น
-- `migrations/0005_club_import_community_attendance.sql` — schema update
-- `tests/api.test.mjs` — API tests (12 tests)
-
-## การทดสอบภายในชุด
-
-```bash
-npm run check
-npm test
-node scripts/build.mjs
-```
-
-## ความปลอดภัย
-- ห้าม Commit รายชื่อนักเรียนจริง, ไฟล์สำรอง SQL, ข้อมูลบัญชีผู้ใช้, `.env` หรือ Cloudflare Secrets ลง GitHub สาธารณะ
-- ตรวจสิทธิ์ทาง API ทุกครั้งก่อนนำเข้าชุมนุมและเช็กชื่อบำเพ็ญประโยชน์; การซิงก์ต้องยืนยันชื่อชุมนุมก่อนดำเนินการ
-- โปรเจกต์ Staging URL สาธารณะได้ แต่การเข้าถึงข้อมูลต้องผ่านบัญชีและสิทธิ์จริง ห้ามใช้รหัสผ่านร่วมกัน
+See `INSTALL_TH_v1.6.md` for a full Ubuntu walkthrough and checks.

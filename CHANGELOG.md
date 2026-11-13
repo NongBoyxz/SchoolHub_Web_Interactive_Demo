@@ -1,15 +1,17 @@
-# SchoolHub CHANGELOG
+# SchoolHub — Changelog
 
-## v1.5.0 — ชุมนุม Excel + กิจกรรมบำเพ็ญประโยชน์ (13 พฤศจิกายน 2569)
-- เพิ่มเมนูนำเข้าสมาชิกชุมนุม Excel (.xlsx/.csv) สำหรับครูที่ปรึกษาที่ได้รับสิทธิ์และ Admin
-- เพิ่มสิทธิ์ `can_import_club_excel` และ `can_sync_club_excel`; ตรวจสอบสิทธิ์ข้ามชุมนุมและเมื่อถูกเพิกถอนระหว่าง Preview
-- รองรับเพิ่มสมาชิก ย้ายชุมนุม ซิงก์/ถอนสมาชิกจากชุมนุมพร้อมประวัติและโควตา
-- เพิ่มหน้าเช็กชื่อกิจกรรมบำเพ็ญประโยชน์รายห้องรายวัน: มา สาย ลา ขาด และยังไม่ระบุ
-- เพิ่มประวัติวันเช็กชื่อและส่งออก CSV ของวันนั้น
-- ป้องกันบันทึกทับเมื่อมีการเช็กชื่อพร้อมกันด้วย version check
-- เพิ่ม Migration 0005 (สอง permission columns และสามตารางใหม่)
-- เพิ่มแบบฟอร์ม XLSX ที่มีเลขประจำตัวนำด้วยศูนย์เป็นข้อความ
-- ชุดทดสอบ API 12/12 ผ่าน รวม UI smoke บนเบราว์เซอร์จำลองแหล่งข้อมูล
+## v1.6.0 — Search counts, manual entry, dashboard by room & official attendance workbook
 
-## v1.4.0 และก่อนหน้า
-ดู GitHub history และ changelog ในเวอร์ชันก่อนหน้า
+- Added `total` to `/api/students` filtered responses; page controls use total matches instead of page-length heuristics.
+- Added `/api/dashboard/rooms` with counts of **active, non-archived students** in each room, scoped to the user's homeroom rights.
+- Simplified the Login view to hide infrastructure and diagnostic implementation text from end users; first-account setup remains distinct.
+- Added **type-in rows** as an alternative to uploading `.xlsx/.csv` for student and club member import, continuing to use the same server-side Preview/Commit authorization, duplicate checks, quota limits and history. Every manual edit invalidates any prior preview.
+- Added **แบบฟอร์มกิจกรรม** with authenticated `/api/forms/options` and `/api/forms/data`; preserved all six original worksheets from `ตารางเช็คเวลาเรียน 2.69.xlsx`. Blank forms and forms prefilled from authorized room/club rosters are generated on the user's device.
+- Recorded attendance marks (`มา/สาย/ลา/ขาด`) are filled **only** for community-service sessions recorded in D1. Club attendance and other activity attendance cannot be filled until those modules exist; missing marks stay blank (never inferred as absences).
+- Template dates are cleared unless configured; a starting date fills 20 weekly headings. Memberships spanning >41 students are split into multiple XLSX files within a ZIP without silently dropping students.
+- Database: **no schema migration** and **no destructive changes**. Student names and IDs are never placed in public templates or JS bundles.
+- Existing v1.5 functionality retained.
+
+## Security notes
+
+Authenticated form-data endpoints enforce homeroom / adviser scope server-side. Files are created in the browser; the XLSX source is a blank official form and contains no student records. ZIPs from the application may contain students' private information: store and share accordingly.

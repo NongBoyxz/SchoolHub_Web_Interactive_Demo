@@ -309,3 +309,40 @@ test('v1.5 community attendance: homeroom scope, date, four statuses, stale upda
   r=await call('community/mark','POST',{...payload,room_id:'2569-5-1',version:0},teach);assert.equal(r.status,403);
   r=await call('audit','GET',null,session);assert.ok(r.data.items.some(x=>x.action==='community_attendance_mark'));
 });
+
+
+test('v1.6 accurate search count and room breakdown obey role scope',async()=>{
+ let r=await call('students?q=TEST-001','GET',null,session);
+ assert.equal(r.status,200);assert.equal(r.data.total,1);assert.equal(r.data.items.length,1);
+ r=await call('students?q=THIS-DATA-DOES-NOT-EXIST','GET',null,session);
+ assert.equal(r.status,200);assert.equal(r.data.total,0);
+ r=await call('dashboard/rooms','GET',null,session);
+ assert.equal(r.status,200);assert.equal(r.data.items.length,33);
+ assert.ok(r.data.items.find(x=>x.id==='2569-1-1'));
+ const logged=await call('auth/login','POST',{username:'teacher1',password:'teacher-pass-2026'});
+ const teacherNew=logged.cookie.split(';')[0];
+ r=await call('dashboard/rooms','GET',null,teacherNew);
+ assert.equal(r.status,200);assert.deepEqual(r.data.items.map(x=>x.id),['2569-1-1']);
+ r=await call('students?q=TEST-001','GET',null,teacherNew);
+ assert.equal(r.data.total,0,'teacher must not learn counts outside scope');
+});
+
+test('v1.6 form roster API restricts teachers and includes only real unarchived members',async()=>{
+ let r=await call('forms/options','GET',null,session);assert.equal(r.status,200);
+ assert.equal(r.data.rooms.length,33);
+ r=await call(`forms/data?kind=club&id=${encodeURIComponent(clubId)}&term=2`,'GET',null,session);
+ assert.equal(r.status,200);assert.equal(r.data.kind,'club');
+ assert.ok(r.data.students.every(x=>x.student_no));
+ r=await call('forms/data?kind=community&id=2569-1-1&term=1','GET',null,session);
+ assert.equal(r.status,200);
+ assert.ok(Array.isArray(r.data.sessions));
+ r=await call('forms/data?kind=other&id=2569-1-1&term=2','GET',null,session);
+ assert.equal(r.status,200);
+ const logged=await call('auth/login','POST',{username:'teacher1',password:'teacher-pass-2026'});
+ const teacherNew=logged.cookie.split(';')[0];
+ r=await call('forms/options','GET',null,teacherNew);assert.equal(r.data.rooms.length,1);
+ r=await call('forms/data?kind=other&id=2569-2-1','GET',null,teacherNew);assert.equal(r.status,403);
+ r=await call('forms/data?kind=club&id=nonexistent','GET',null,teacherNew);assert.equal(r.status,404);
+ r=await call('forms/data?kind=other&id=2569-1-1','GET',null,teacherNew);assert.equal(r.status,200);
+ r=await call('forms/options','GET');assert.equal(r.status,401);
+});
