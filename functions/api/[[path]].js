@@ -415,7 +415,7 @@ async function listRooms(db,user) {
 }
 async function listUsers(db,user) {
   access(user,'super_admin','admin');
-  const users=await db.prepare('SELECT id,username,display_name,role,active,can_import_excel,can_sync_excel,created_at FROM users ORDER BY role,display_name').all();
+  const users=await db.prepare('SELECT id,username,display_name,role,active,can_import_excel,can_sync_excel,can_import_club_excel,can_sync_club_excel,created_at FROM users ORDER BY active DESC,role,display_name').all();
   const trs=await db.prepare('SELECT user_id,room_id FROM teacher_rooms').all();
   const tcs=await db.prepare('SELECT user_id,club_id FROM teacher_clubs').all();
   return {users:users.results,teacher_rooms:trs.results,teacher_clubs:tcs.results};
@@ -431,9 +431,69 @@ async function addUser(db,user,request) {
   catch(e){if(/UNIQUE/i.test(String(e))) throw error('ชื่อผู้ใช้นี้มีอยู่แล้ว',409);throw e;}
   await log(db,user,'create','user',userId,{username,role});return {id:userId,ok:true};
 }
+// SchoolHub 1.6.1: Accounts are deactivated rather than physically removed, because
+// attendance and audit history have foreign keys to users(id). Only a Super Admin
+// may remove or restore an account. Both operations are transactional.
+async function removeUser(db, actor, userId, request) {
+  access(actor,'super_admin');
+  if(actor.id===userId) throw error('ไม่สามารถลบบัญชีของตนเองได้',403,'SELF_DELETE');
+  const p=await body(request);
+  const reason=required(p.reason,'เหตุผลในการลบบัญชี',300);
+  if(reason.length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร');
+  const target=await db.prepare('SELECT id,username,display_name,role,active FROM users WHERE id=?').bind(userId).first();
+  if(!target) throw error('ไม่พบบัญชีผู้ใช้',404,'NOT_FOUND');
+  if(target.active!==1) throw error('บัญชีถูกนำออกแล้ว',409,'ALREADY_REMOVED');
+  if(String(p.confirm_username||'').trim().toLowerCase()!==target.username.toLowerCase())
+    throw error('กรุณาพิมพ์ชื่อผู้ใช้ให้ตรงเพื่อยืนยันการลบบัญชี',400,'CONFIRM_USERNAME');
+  if(target.role==='super_admin') {
+    const count=await db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='super_admin' AND active=1").first();
+    if(count.n<=1) throw error('ไม่สามารถลบ Super Admin คนสุดท้ายได้',409,'LAST_SUPER_ADMIN');
+  }
+  const now=sqlNow();
+  const guard=`EXISTS(SELECT 1 FROM users WHERE id=? AND username=? AND active=1 AND id<>?)
+    AND (COALESCE((SELECT role FROM users WHERE id=?),'')<>'super_admin' OR
+      (SELECT COUNT(*) FROM users WHERE role='super_admin' AND active=1)>1)`;
+  const statements=[
+    checkGuard(db,guard,[target.id,target.username,actor.id,target.id]),
+    db.prepare('UPDATE users SET active=0,can_import_excel=0,can_sync_excel=0,can_import_club_excel=0,can_sync_club_excel=0 WHERE id=?').bind(target.id),
+    db.prepare('DELETE FROM sessions WHERE user_id=?').bind(target.id),
+    db.prepare('DELETE FROM teacher_rooms WHERE user_id=?').bind(target.id),
+    db.prepare('DELETE FROM teacher_clubs WHERE user_id=?').bind(target.id),
+    db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+      .bind(actor.id,'remove_user','user',target.id,JSON.stringify({username:target.username,display_name:target.display_name,role:target.role,reason}),now),
+    db.prepare('DELETE FROM excel_import_guard')
+  ];
+  try { await db.batch(statements); }
+  catch(e) {
+    if(/CHECK constraint failed/i.test(String(e))) throw error('บัญชีหรือสิทธิ์เปลี่ยนแปลงแล้ว กรุณาโหลดหน้าบัญชีใหม่',409,'STALE_ACCOUNT');
+    throw e;
+  }
+  return {ok:true,removed:true,user_id:target.id};
+}
+async function restoreUser(db,actor,userId,request){
+  access(actor,'super_admin');
+  const p=await body(request);
+  const reason=required(p.reason,'เหตุผลในการกู้คืนบัญชี',300);
+  if(reason.length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร');
+  const target=await db.prepare('SELECT id,username,display_name,role,active FROM users WHERE id=?').bind(userId).first();
+  if(!target) throw error('ไม่พบบัญชีผู้ใช้',404,'NOT_FOUND');
+  if(target.active!==0) throw error('บัญชีนี้ยังเปิดใช้งานอยู่',409,'ALREADY_ACTIVE');
+  if(String(p.confirm_username||'').trim().toLowerCase()!==target.username.toLowerCase())
+    throw error('กรุณาพิมพ์ชื่อผู้ใช้ให้ตรงเพื่อยืนยันการกู้คืน',400,'CONFIRM_USERNAME');
+  const statements=[
+    checkGuard(db,'EXISTS(SELECT 1 FROM users WHERE id=? AND active=0)',[target.id]),
+    db.prepare('UPDATE users SET active=1,can_import_excel=0,can_sync_excel=0,can_import_club_excel=0,can_sync_club_excel=0 WHERE id=?').bind(target.id),
+    db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+      .bind(actor.id,'restore_user','user',target.id,JSON.stringify({username:target.username,role:target.role,reason,permissions_reset:true}),sqlNow()),
+    db.prepare('DELETE FROM excel_import_guard')
+  ];
+  try{await db.batch(statements);}
+  catch(e){if(/CHECK constraint failed/i.test(String(e)))throw error('สถานะบัญชีเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่',409,'STALE_ACCOUNT');throw e;}
+  return {ok:true,restored:true,permissions_reset:true};
+}
 async function assignTeacher(db,user,request) {
   access(user,'super_admin','admin');const p=await body(request);
-  const target=await db.prepare("SELECT id,role,can_import_excel,can_sync_excel,can_import_club_excel,can_sync_club_excel FROM users WHERE id=? AND role='teacher'").bind(p.user_id).first();
+  const target=await db.prepare("SELECT id,role,can_import_excel,can_sync_excel,can_import_club_excel,can_sync_club_excel FROM users WHERE id=? AND role='teacher' AND active=1").bind(p.user_id).first();
   if(!target) throw error('ไม่พบบัญชีครู');
   if(!Array.isArray(p.room_ids)||!Array.isArray(p.club_ids)||p.room_ids.length>50||p.club_ids.length>1) throw error('ข้อมูลมอบหมายไม่ถูกต้อง (ครูรับชุมนุมได้หนึ่งชุมนุม)');
   if(p.can_import_excel!==undefined && typeof p.can_import_excel!=='boolean')throw error('สิทธิ์นำเข้า Excel ต้องเป็น true/false');
@@ -449,13 +509,18 @@ async function assignTeacher(db,user,request) {
   const roomIds=[...new Set(p.room_ids.map(v=>String(v)))],clubIds=[...new Set(p.club_ids.map(v=>String(v)))];
   for(const r of roomIds)if(!await db.prepare('SELECT 1 AS ok FROM rooms WHERE id=?').bind(r).first())throw error('ไม่พบห้องเรียน '+r);
   for(const c of clubIds)if(!await db.prepare('SELECT 1 AS ok FROM clubs WHERE id=? AND active=1').bind(c).first())throw error('ไม่พบชุมนุม '+c);
-  const statements=[db.prepare('DELETE FROM teacher_rooms WHERE user_id=?').bind(target.id),db.prepare('DELETE FROM teacher_clubs WHERE user_id=?').bind(target.id),
+  const statements=[checkGuard(db,"EXISTS(SELECT 1 FROM users WHERE id=? AND role='teacher' AND active=1)",[target.id]),db.prepare('DELETE FROM teacher_rooms WHERE user_id=?').bind(target.id),db.prepare('DELETE FROM teacher_clubs WHERE user_id=?').bind(target.id),
     db.prepare('UPDATE users SET can_import_excel=?,can_sync_excel=?,can_import_club_excel=?,can_sync_club_excel=? WHERE id=?').bind(canImport?1:0,canSync?1:0,clubImport?1:0,clubSync?1:0,target.id)];
   for(const r of roomIds) statements.push(db.prepare('INSERT INTO teacher_rooms(user_id,room_id) VALUES(?,?)').bind(target.id,r));
   for(const c of clubIds) statements.push(db.prepare('INSERT INTO teacher_clubs(user_id,club_id) VALUES(?,?)').bind(target.id,c));
   statements.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
     .bind(user.id,'assign','user',target.id,JSON.stringify({rooms:roomIds,clubs:clubIds,can_import_excel:canImport,can_sync_excel:canSync,can_import_club_excel:clubImport,can_sync_club_excel:clubSync}),sqlNow()));
-  await db.batch(statements);return {ok:true};
+  statements.push(db.prepare('DELETE FROM excel_import_guard'));
+  try { await db.batch(statements); } catch(e){
+    if(/CHECK constraint failed/i.test(String(e))) throw error('บัญชีถูกนำออกหรือสิทธิ์เปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่',409,'STALE_ACCOUNT');
+    throw e;
+  }
+  return {ok:true};
 }
 async function exportStudents(db,user) {
   const all=[];
@@ -874,7 +939,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.0'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.1'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -921,6 +986,8 @@ export async function onRequest({request,env}) {
     if(route==='memberships'&&request.method==='POST')return json(await transferClub(db,user,request));
     if(route==='users'&&request.method==='GET')return json(await listUsers(db,user));
     if(route==='users'&&request.method==='POST')return json(await addUser(db,user,request),201);
+    if(/^users\/[^/]+\/remove$/.test(route)){requireMethod(request.method,'POST');return json(await removeUser(db,user,route.split('/')[1],request));}
+    if(/^users\/[^/]+\/restore$/.test(route)){requireMethod(request.method,'POST');return json(await restoreUser(db,user,route.split('/')[1],request));}
     if(route==='assignments'&&request.method==='POST')return json(await assignTeacher(db,user,request));
     if(route==='audit'&&request.method==='GET') {access(user,'super_admin','admin');const q=await db.prepare(`SELECT a.id,a.at,a.action,a.entity_type,a.entity_id,a.details,u.display_name AS actor
       FROM audit_log a JOIN users u ON u.id=a.actor_id ORDER BY a.id DESC LIMIT 100`).all();return json({items:q.results});}

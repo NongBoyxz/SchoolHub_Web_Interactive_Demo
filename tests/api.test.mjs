@@ -346,3 +346,77 @@ test('v1.6 form roster API restricts teachers and includes only real unarchived 
  r=await call('forms/data?kind=other&id=2569-1-1','GET',null,teacherNew);assert.equal(r.status,200);
  r=await call('forms/options','GET');assert.equal(r.status,401);
 });
+
+test('v1.6.1 only Super Admin can remove users; sessions, grants revoked and audit preserved',async()=>{
+  let r=await call('users','POST',{username:'removeuser1',display_name:'ครูลบทดสอบ',role:'teacher',password:'account-removed-test-2026'},session);
+  assert.equal(r.status,201,JSON.stringify(r.data));const uid=r.data.id;
+  r=await call('assignments','POST',{user_id:uid,room_ids:['2569-1-1'],club_ids:[clubId],can_import_excel:true,can_import_club_excel:true},session);
+  assert.equal(r.status,200);
+  r=await call('auth/login','POST',{username:'removeuser1',password:'account-removed-test-2026'});
+  assert.equal(r.status,200);const cookie=r.cookie.split(';')[0];
+  // Teacher cannot remove anybody.
+  r=await call('users/'+uid+'/remove','POST',{confirm_username:'removeuser1',reason:'บัญชีทดสอบที่ยกเลิก'},cookie);
+  assert.equal(r.status,403);
+  // Admin is not Super Admin.
+  r=await call('users','POST',{username:'testadmin',display_name:'ผู้ดูแลรอง',role:'admin',password:'account-admin-test-2026'},session);
+  assert.equal(r.status,201);const adminId=r.data.id;
+  r=await call('auth/login','POST',{username:'testadmin',password:'account-admin-test-2026'});
+  assert.equal(r.status,200);const adminCookie=r.cookie.split(';')[0];
+  r=await call('users/'+uid+'/remove','POST',{confirm_username:'removeuser1',reason:'บัญชีทดสอบที่ยกเลิก'},adminCookie);
+  assert.equal(r.status,403);
+  // Must confirm exact account username and submit a meaningful reason.
+  r=await call('users/'+uid+'/remove','POST',{confirm_username:'wrong',reason:'บัญชีทดสอบที่ยกเลิก'},session);
+  assert.equal(r.status,400);
+  r=await call('users/'+uid+'/remove','POST',{confirm_username:'removeuser1',reason:'abc'},session);
+  assert.equal(r.status,400);
+  const me=await call('auth/me','GET',null,session);
+  r=await call('users/'+me.data.user.id+'/remove','POST',{confirm_username:'admin1',reason:'จะลบตัวเอง'},session);
+  assert.equal(r.status,403);
+  r=await call('users/'+uid+'/remove','POST',{confirm_username:'removeuser1',reason:'บัญชีทดสอบที่ยกเลิก'},session);
+  assert.equal(r.status,200,JSON.stringify(r.data));
+  r=await call('auth/me','GET',null,cookie);assert.equal(r.status,401,'pre-existing session must be revoked');
+  r=await call('auth/login','POST',{username:'removeuser1',password:'account-removed-test-2026'});
+  assert.equal(r.status,401,'removed user cannot log in');
+  r=await call('users','GET',null,session);
+  const user=r.data.users.find(u=>u.id===uid);assert.equal(user.active,0);
+  assert.equal(user.can_import_excel,0);assert.equal(user.can_import_club_excel,0);
+  assert.equal(r.data.teacher_rooms.filter(x=>x.user_id===uid).length,0);
+  assert.equal(r.data.teacher_clubs.filter(x=>x.user_id===uid).length,0);
+  r=await call('audit','GET',null,session);
+  assert.ok(r.data.items.some(x=>x.action==='remove_user'&&x.entity_id===uid));
+  r=await call('assignments','POST',{user_id:uid,room_ids:['2569-1-1'],club_ids:[]},session);
+  assert.equal(r.status,400,'must not grant assignments to removed user');
+  r=await call('users','POST',{username:'removeuser1',display_name:'สมัครซ้ำ',role:'teacher',password:'account-removed-test-2026'},session);
+  assert.equal(r.status,409,'archived username remains reserved to preserve history');
+  // Restore is also super-admin-only and requires confirmation.
+  r=await call('users/'+uid+'/restore','POST',{confirm_username:'removeuser1',reason:'คืนบัญชีเพื่อทดสอบ'},adminCookie);
+  assert.equal(r.status,403);
+  r=await call('users/'+uid+'/restore','POST',{confirm_username:'wrong',reason:'คืนบัญชีเพื่อทดสอบ'},session);
+  assert.equal(r.status,400);
+  r=await call('users/'+uid+'/restore','POST',{confirm_username:'removeuser1',reason:'คืนบัญชีเพื่อทดสอบ'},session);
+  assert.equal(r.status,200,JSON.stringify(r.data));
+  r=await call('auth/login','POST',{username:'removeuser1',password:'account-removed-test-2026'});
+  assert.equal(r.status,200);
+  r=await call('users','GET',null,session);
+  assert.equal(r.data.users.find(u=>u.id===uid).active,1);
+  assert.equal(r.data.teacher_rooms.filter(x=>x.user_id===uid).length,0,'old assignments must not silently return');
+  r=await call('audit','GET',null,session);
+  assert.ok(r.data.items.some(x=>x.action==='restore_user'&&x.entity_id===uid));
+  // Remove test Admin via Super Admin; old Admin session loses access immediately.
+  r=await call('users/'+adminId+'/remove','POST',{confirm_username:'testadmin',reason:'ยกเลิกบัญชีผู้ดูแลรอง'},session);
+  assert.equal(r.status,200);
+  r=await call('users','GET',null,adminCookie);assert.equal(r.status,401);
+});
+
+test('v1.6.1 protects the last Super Admin and permits safe removal of an extra one',async()=>{
+ let r=await call('users','POST',{username:'extra-super',display_name:'ผู้ดูแลหลักสำรอง',role:'super_admin',password:'extra-super-password-2026'},session);
+ assert.equal(r.status,201);const extra=r.data.id;
+ r=await call('users/'+extra+'/remove','POST',{confirm_username:'extra-super',reason:'ปิดบัญชีสำรองทดสอบ'},session);
+ assert.equal(r.status,200);
+ const active=sqlite.prepare("SELECT COUNT(*) AS n FROM users WHERE role='super_admin' AND active=1").get();
+ assert.equal(active.n,1);
+ const primary=sqlite.prepare("SELECT id FROM users WHERE username='admin1'").get();
+ r=await call('users/'+primary.id+'/remove','POST',{confirm_username:'admin1',reason:'ปิดบัญชีสุดท้าย'},session);
+ assert.equal(r.status,403,'cannot remove self, including last super admin');
+ assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM users WHERE role='super_admin' AND active=1").get().n,1);
+});

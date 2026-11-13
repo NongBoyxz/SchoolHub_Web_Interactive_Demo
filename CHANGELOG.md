@@ -1,5 +1,16 @@
 # SchoolHub — Changelog
 
+## v1.6.1 — Super Admin account removal and recovery
+
+- Added account **ลบบัญชี** only for Super Admin, requiring a reason (≥5 characters) and typed confirmation of the exact username.
+- Implemented transactional account deactivation (`active=0`), session revocation and teacher room/club assignment removal. No user row is physically removed, protecting historical foreign keys and audit trails.
+- Prevented self-removal and removal of the last active Super Admin, including server-side guard against concurrent changes.
+- Added a separate list of removed accounts and Super Admin-only **กู้คืนบัญชี**; login is restored but prior grants and teaching assignments are not.
+- Fixed list-users API to return club Excel permissions and blocked reassigning a removed teacher.
+- Added end-to-end API integration scenarios for authorization, active sessions, reason/username confirmation, audit, restoration and uniqueness.
+- No new migration and no student/club/attendance data changes required.
+
+
 ## v1.6.0 — Search counts, manual entry, dashboard by room & official attendance workbook
 
 - Added `total` to `/api/students` filtered responses; page controls use total matches instead of page-length heuristics.

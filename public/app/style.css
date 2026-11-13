@@ -62,3 +62,14 @@
 .manual-row input{min-width:0}
 [hidden]{display:none!important}
 @media(max-width:700px){.manual-row{grid-template-columns:1fr 1fr}.manual-row>button{grid-column:span 2}}
+
+/* v1.6.1 — Super Admin account lifecycle */
+.account-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center;min-width:140px}
+.btn.danger-outline{background:#fff4f3;color:#a72222;border-color:#efb1ac}
+.btn.danger-outline:hover{background:#ffe7e5}
+.btn.danger-action{background:#bb2727;border-color:#bb2727;color:#fff}
+.btn.danger-action:hover{background:#9f1b1b}
+.removed-accounts{margin-top:18px;padding:14px}
+.removed-accounts summary{cursor:pointer;font-weight:700;color:#475d7a}
+.removed-accounts .data-table{margin-top:12px}
+.account-disabled{color:#a64527;font-weight:700}

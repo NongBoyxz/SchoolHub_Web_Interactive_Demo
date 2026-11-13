@@ -1,6 +1,16 @@
-# SchoolHub Cloudflare v1.6 — โรงเรียนเทพศาลาประชาสรรค์
+# SchoolHub Cloudflare v1.6.1 — โรงเรียนเทพศาลาประชาสรรค์
 
 This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` binding. Do not commit database exports, real student rosters, access tokens, or user passwords.
+
+## Changes in 1.6.1
+
+- Super Admin can remove (deactivate) user accounts from **บัญชีและสิทธิ์**, with required reason and exact username confirmation; active sessions and teacher assignments are revoked transactionally.
+- Only Super Admin may restore deactivated accounts. On restore all Excel import permissions remain disabled, and homeroom/club assignments must be granted again.
+- Self-removal and removal of the final active Super Admin are blocked in both API and UI.
+- No hard deletion of `users` rows, so attendance, imports and audit references remain valid. Deactivated usernames remain reserved.
+- No schema migration. Back up D1 before deploying v1.6.1; do not rerun real-data import or earlier migrations.
+
+See `INSTALL_TH_v1.6.1.md` for Ubuntu instructions.
 
 ## Changes in 1.6
 
