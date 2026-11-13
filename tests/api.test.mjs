@@ -5,6 +5,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {onRequest} from '../functions/api/[[path]].js';
 const sqlite=new DatabaseSync(':memory:');
 sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
+sqlite.exec(readFileSync(new URL('../migrations/0002_student_archives.sql',import.meta.url),'utf8'));
 const db={
  prepare(sql){let stmt=sqlite.prepare(sql), args=[];
    const wrap={bind(...v){args=v;return wrap;},first(){return stmt.get(...args)??null;},all(){return {results:stmt.all(...args)};},run(){return {meta:{changes:stmt.run(...args).changes}};}};
@@ -67,4 +68,39 @@ test('teacher assignment and scope enforcement',async()=>{
 test('logout clears access',async()=>{
  let r=await call('auth/logout','POST',{},teacherCookie);assert.equal(r.status,200);
  r=await call('auth/me','GET',null,teacherCookie);assert.equal(r.status,401);
+});
+test('soft delete archives without destroying records; only admins may archive/restore; quota and CSV stay accurate',async()=>{
+ const r0=await call('students','GET',null,session);
+ const member=r0.data.items.find(s=>s.student_no==='12346');
+ assert.ok(member,'second club member');
+ // A teacher may view students, but never archive a student.
+ let r=await call('auth/login','POST',{username:'teacher1',password:'teacher-pass-2026'});
+ const teacherSession=r.cookie.split(';')[0];
+ r=await call('students/'+member.id+'/archive','POST',{version:member.version,reason:'ออกตามใบคำร้อง'},teacherSession);
+ assert.equal(r.status,403);
+ r=await call('students/archived','GET',null,teacherSession);assert.equal(r.status,403);
+ r=await call('students/'+member.id+'/archive','POST',{version:member.version,reason:'สั้น'},session);
+ assert.equal(r.status,400);
+ r=await call('students/'+member.id+'/archive','POST',{version:member.version,reason:'นำออกจากรายการเพื่อทดสอบ'},session);
+ assert.equal(r.status,200);assert.equal(r.data.version,member.version+1);
+ r=await call('students','GET',null,session);
+ assert.ok(!r.data.items.some(s=>s.id===member.id),'student hidden from active listing');
+ r=await call('students/archived','GET',null,session);
+ const archive=r.data.items.find(s=>s.id===member.id);
+ assert.ok(archive);assert.equal(archive.version,member.version+1);
+ r=await call('students/'+member.id,'PATCH',{version:member.version+1,first_name:'ต้องไม่แก้'},session);assert.equal(r.status,404);
+ r=await call('clubs','GET',null,session);assert.equal(r.data.items.find(c=>c.id===clubId).members,0);
+ r=await call('export/students','GET',null,session);assert.ok(!r.data.includes('12346'));
+ // Archived student ID is reserved, so history can't accidentally attach to a replacement student.
+ r=await call('students','POST',{student_no:'12346',first_name:'ซ้ำ',last_name:'เก็บประวัติ',room_id:'2569-1-1'},session);assert.equal(r.status,409);
+ // Fill the newly freed membership and verify the restore quota guard.
+ r=await call('students','POST',{student_no:'99998',first_name:'สมาชิก',last_name:'ใหม่',room_id:'2569-1-1',club_id:clubId},session);assert.equal(r.status,201);
+ r=await call('students/'+member.id+'/restore','POST',{version:archive.version},session);
+ assert.equal(r.status,409);assert.equal(r.data.code,'CLUB_FULL');
+ r=await call('students/'+member.id+'/restore','POST',{version:archive.version,override_capacity:true,reason:'ขออนุญาตคืนสมาชิกเดิม'},session);
+ assert.equal(r.status,200);
+ r=await call('students','GET',null,session);assert.ok(r.data.items.some(s=>s.id===member.id));
+ r=await call('students/archived','GET',null,session);assert.ok(!r.data.items.some(s=>s.id===member.id));
+ r=await call('clubs','GET',null,session);assert.equal(r.data.items.find(c=>c.id===clubId).members,2);
+ r=await call('audit','GET',null,session);assert.ok(r.data.items.some(a=>a.action==='archive'));assert.ok(r.data.items.some(a=>a.action==='restore'));
 });

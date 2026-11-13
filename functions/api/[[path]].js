@@ -1,4 +1,4 @@
-// SchoolHub v1.1 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
+// SchoolHub v1.2 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
 const encoder = new TextEncoder();
 const MAX_BODY = 90000;
 const SESSION_SECONDS = 8 * 3600;
@@ -122,7 +122,7 @@ async function setup(db,request,env) {
 async function getDashboard(db,user) {
   if(isAdmin(user)) {
     const [students,clubs,rooms,teachers]=await db.batch([
-      db.prepare("SELECT COUNT(*) AS n FROM students WHERE status='active'"),
+      db.prepare("SELECT COUNT(*) AS n FROM students WHERE status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id)"),
       db.prepare('SELECT COUNT(*) AS n FROM clubs WHERE active=1'),
       db.prepare('SELECT COUNT(*) AS n FROM rooms WHERE year=(SELECT label FROM academic_years WHERE is_current=1 LIMIT 1)'),
       db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='teacher' AND active=1")
@@ -130,7 +130,7 @@ async function getDashboard(db,user) {
     return {students:students.results[0].n,clubs:clubs.results[0].n,rooms:rooms.results[0].n,teachers:teachers.results[0].n};
   }
   const [st,cl,rm]=await db.batch([
-    db.prepare(`SELECT COUNT(DISTINCT s.id) AS n FROM students s WHERE s.status='active'
+    db.prepare(`SELECT COUNT(DISTINCT s.id) AS n FROM students s WHERE s.status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
       AND (s.room_id IN (SELECT room_id FROM teacher_rooms WHERE user_id=?) OR
       s.club_id IN (SELECT club_id FROM teacher_clubs WHERE user_id=?))`).bind(user.id,user.id),
     db.prepare('SELECT COUNT(*) AS n FROM teacher_clubs WHERE user_id=?').bind(user.id),
@@ -141,7 +141,7 @@ async function getDashboard(db,user) {
 async function listStudents(db,user,url) {
   const q=cleanString(url.searchParams.get('q'),100),roomId=cleanString(url.searchParams.get('room_id'),80);
   const clubId=cleanString(url.searchParams.get('club_id'),80), page=Math.max(1,Math.min(1000,Number(url.searchParams.get('page'))||1));
-  const limit=50, where=["s.status='active'"]; const args=[];
+  const limit=50, where=["s.status='active'",'NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id)']; const args=[];
   if(!isAdmin(user)) {where.push(`(s.room_id IN(SELECT room_id FROM teacher_rooms WHERE user_id=?) OR s.club_id IN(SELECT club_id FROM teacher_clubs WHERE user_id=?))`); args.push(user.id,user.id);}
   if(q){where.push(`(s.student_no LIKE ? OR s.first_name LIKE ? OR s.last_name LIKE ?)`); args.push(`%${q}%`,`%${q}%`,`%${q}%`);}
   if(roomId){where.push('s.room_id=?'); args.push(roomId);}
@@ -164,11 +164,12 @@ async function createStudent(db,user,request) {
   const club=await validatedClub(db,p.club_id,room.year), clubId=club?.id||null;
   if(clubId && !isAdmin(user) && !await visibleRoom(db,user,roomId)) throw error('ไม่มีสิทธิ์',403);
   const studentId=id(),now=sqlNow();
-  const override=isAdmin(user)&&p.override_capacity===true && cleanString(p.reason,200).length>=5;
+  if(isAdmin(user)&&p.override_capacity===true&&cleanString(p.reason,200).length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษรเมื่ออนุญาตเกินโควตา');
+  const override=isAdmin(user)&&p.override_capacity===true;
   const statement = db.prepare(`INSERT INTO students(id,student_no,prefix,first_name,last_name,room_id,club_id,created_at,updated_at)
    SELECT ?,?,?,?,?,?,?,?,? WHERE ? IS NULL OR ?=1 OR
      (SELECT capacity FROM clubs WHERE id=?) IS NULL OR
-     (SELECT COUNT(*) FROM students WHERE club_id=? AND status='active') < (SELECT capacity FROM clubs WHERE id=?)`)
+     (SELECT COUNT(*) FROM students WHERE club_id=? AND status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id)) < (SELECT capacity FROM clubs WHERE id=?)`)
    .bind(studentId,studentNo,cleanString(p.prefix,20),first,last,roomId,clubId,now,now,clubId,override?1:0,clubId,clubId,clubId);
   try {
     const r=await statement.run();
@@ -181,7 +182,7 @@ async function createStudent(db,user,request) {
 }
 async function updateStudent(db,user,studentId,request) {
   const p=await body(request), current=await studentRow(db,studentId);
-  if(!current||current.status!=='active') throw error('ไม่พบนักเรียน',404);
+  if(!current||current.status!=='active'||await db.prepare('SELECT 1 FROM student_archives WHERE student_id=?').bind(studentId).first()) throw error('ไม่พบนักเรียนที่ใช้งานอยู่',404);
   if(!await studentVisible(db,user,current)) throw error('ไม่มีสิทธิ์เข้าถึงนักเรียน',403);
   if(!await visibleRoom(db,user,current.room_id)) throw error('เฉพาะครูประจำชั้นของนักเรียนหรือ Admin จึงแก้ข้อมูลส่วนตัวได้',403);
   const v=Number(p.version); if(!Number.isInteger(v)||v!==current.version) throw error('ข้อมูลมีการแก้ไขแล้ว กรุณาโหลดข้อมูลล่าสุด',409,'STALE');
@@ -199,7 +200,7 @@ async function updateStudent(db,user,studentId,request) {
   const now=sqlNow();
   const stmts=[
     db.prepare(`UPDATE students SET student_no=?,prefix=?,first_name=?,last_name=?,room_id=?,status=?,version=version+1,updated_at=?
-      WHERE id=? AND version=?`).bind(next.student_no,next.prefix,next.first_name,next.last_name,next.room_id,next.status,now,studentId,v),
+      WHERE id=? AND version=? AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id)`).bind(next.student_no,next.prefix,next.first_name,next.last_name,next.room_id,next.status,now,studentId,v),
     db.prepare(`INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at)
       SELECT ?,'update','student',?,?,? FROM students WHERE id=? AND version=? AND changes()>0`)
       .bind(user.id,studentId,JSON.stringify({old:{student_no:current.student_no,room_id:current.room_id,status:current.status},new:next}),now,studentId,v+1)
@@ -210,17 +211,18 @@ async function updateStudent(db,user,studentId,request) {
 }
 async function transferClub(db,user,request) {
   const p=await body(request), s=await studentRow(db,required(p.student_id,'นักเรียน',80));
-  if(!s||s.status!=='active') throw error('ไม่พบนักเรียน',404);
+  if(!s||s.status!=='active'||await db.prepare('SELECT 1 FROM student_archives WHERE student_id=?').bind(s.id).first()) throw error('ไม่พบนักเรียนที่ใช้งานอยู่',404);
   if(!await studentVisible(db,user,s)) throw error('ไม่มีสิทธิ์',403);
   const v=Number(p.version);
   if(!Number.isInteger(v)||v!==s.version) throw error('ข้อมูลมีการเปลี่ยนแปลงแล้ว กรุณาโหลดใหม่',409,'STALE');
   const newClub=await validatedClub(db,p.club_id,s.room_year), clubId=newClub?.id||null;
   if(s.club_id===clubId) throw error('นักเรียนอยู่ในชุมนุมนี้แล้ว');
   if(!isAdmin(user) && !(await visibleRoom(db,user,s.room_id) || (s.club_id && await visibleClub(db,user,s.club_id)) || (clubId && await visibleClub(db,user,clubId)))) throw error('ไม่มีสิทธิ์ย้ายสมาชิก',403);
-  const override=isAdmin(user)&&p.override_capacity===true && cleanString(p.reason,200).length>=5;
+  if(isAdmin(user)&&p.override_capacity===true&&cleanString(p.reason,200).length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษรเมื่ออนุญาตเกินโควตา');
+  const override=isAdmin(user)&&p.override_capacity===true;
   const now=sqlNow(), reason=cleanString(p.reason,200);
-  const capacityClause=clubId ? `AND (?=1 OR (SELECT capacity FROM clubs WHERE id=?) IS NULL OR (SELECT COUNT(*) FROM students WHERE club_id=? AND status='active') < (SELECT capacity FROM clubs WHERE id=?))` : '';
-  const update=db.prepare(`UPDATE students SET club_id=?,version=version+1,updated_at=? WHERE id=? AND version=? ${capacityClause}`);
+  const capacityClause=clubId ? `AND (?=1 OR (SELECT capacity FROM clubs WHERE id=?) IS NULL OR (SELECT COUNT(*) FROM students WHERE club_id=? AND status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id)) < (SELECT capacity FROM clubs WHERE id=?))` : '';
+  const update=db.prepare(`UPDATE students SET club_id=?,version=version+1,updated_at=? WHERE id=? AND version=? AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id) ${capacityClause}`);
   const params=clubId?[clubId,now,s.id,v,override?1:0,clubId,clubId,clubId]:[null,now,s.id,v];
   const [result] = await db.batch([
     update.bind(...params),
@@ -233,11 +235,88 @@ async function transferClub(db,user,request) {
   if(!result.meta?.changes) throw error('ข้อมูลเปลี่ยนแล้วหรือชุมนุมเต็ม กรุณาตรวจสอบและลองใหม่',409,'STALE_OR_FULL');
   return {ok:true,version:v+1};
 }
+async function listArchivedStudents(db,user,url) {
+  access(user,'super_admin','admin');
+  const q=cleanString(url.searchParams.get('q'),100);
+  const page=Math.max(1,Math.min(1000,Number(url.searchParams.get('page'))||1));
+  const args=[], where=[];
+  if(q){where.push('(s.student_no LIKE ? OR s.first_name LIKE ? OR s.last_name LIKE ?)');args.push(`%${q}%`,`%${q}%`,`%${q}%`);}
+  const result=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.status,s.version,
+     r.grade,r.room_no,r.year,a.archived_at,a.reason,a.archived_by,u.display_name AS archived_by_name
+     FROM student_archives a JOIN students s ON s.id=a.student_id
+     JOIN rooms r ON r.id=s.room_id JOIN users u ON u.id=a.archived_by
+     ${where.length?'WHERE '+where.join(' AND '):''}
+     ORDER BY a.archived_at DESC,s.student_no LIMIT 50 OFFSET ?`).bind(...args, (page-1)*50).all();
+  return {items:result.results,page,page_size:50};
+}
+async function archiveStudent(db,user,studentId,request) {
+  access(user,'super_admin','admin');
+  const p=await body(request), student=await studentRow(db,studentId);
+  if(!student||student.status!=='active') throw error('ไม่พบนักเรียนที่ใช้งานอยู่',404);
+  const version=Number(p.version);
+  if(!Number.isInteger(version)||student.version!==version) throw error('ข้อมูลมีการเปลี่ยนแปลงแล้ว กรุณาโหลดใหม่',409,'STALE');
+  const already=await db.prepare('SELECT 1 FROM student_archives WHERE student_id=?').bind(studentId).first();
+  if(already) throw error('นักเรียนถูกนำออกจากรายการแล้ว',409,'ALREADY_ARCHIVED');
+  const reason=required(p.reason,'เหตุผลการนำออก',200);
+  if(reason.length<5) throw error('กรุณากรอกเหตุผลการนำออกอย่างน้อย 5 ตัวอักษร');
+  const at=sqlNow();
+  const [updated,archived]=await db.batch([
+    db.prepare(`UPDATE students SET version=version+1,updated_at=? WHERE id=? AND version=? AND status='active'
+      AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=students.id)`).bind(at,studentId,version),
+    db.prepare(`INSERT INTO student_archives(student_id,archived_at,archived_by,reason)
+      SELECT s.id,?,?,? FROM students s WHERE s.id=? AND s.version=? AND changes()>0`)
+      .bind(at,user.id,reason,studentId,version+1),
+    db.prepare(`INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at)
+      SELECT ?,'archive','student',?,?,? FROM students WHERE id=? AND version=? AND changes()>0`)
+      .bind(user.id,studentId,JSON.stringify({reason,old_version:version}),at,studentId,version+1)
+  ]).then(result=>result.slice(0,2));
+  if(!updated.meta?.changes||!archived.meta?.changes) throw error('ข้อมูลนักเรียนถูกแก้ไขไปแล้ว กรุณาโหลดใหม่',409,'STALE');
+  return {ok:true,version:version+1};
+}
+async function restoreStudent(db,user,studentId,request) {
+  access(user,'super_admin','admin');
+  const p=await body(request), student=await studentRow(db,studentId);
+  if(!student) throw error('ไม่พบข้อมูลนักเรียน',404);
+  const version=Number(p.version);
+  if(!Number.isInteger(version)||version!==student.version) throw error('ข้อมูลมีการเปลี่ยนแปลงแล้ว กรุณาโหลดใหม่',409,'STALE');
+  const archived=await db.prepare('SELECT * FROM student_archives WHERE student_id=?').bind(studentId).first();
+  if(!archived) throw error('นักเรียนไม่ได้อยู่ในรายการที่นำออก',409,'NOT_ARCHIVED');
+  // Restoring an old membership cannot silently exceed a club's capacity.
+  let needsOverride=false;
+  if(student.club_id){
+    const cap=await db.prepare(`SELECT c.capacity,COUNT(s.id) AS members FROM clubs c LEFT JOIN students s
+      ON s.club_id=c.id AND s.status='active' AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
+      WHERE c.id=? GROUP BY c.id`).bind(student.club_id).first();
+    needsOverride=cap?.capacity!==null && cap?.capacity!==undefined && Number(cap.members)>=Number(cap.capacity);
+  }
+  const reason=cleanString(p.reason,200);
+  if(needsOverride && !(p.override_capacity===true && reason.length>=5))
+    throw error('ชุมนุมเดิมเต็มแล้ว ต้องติ๊กอนุญาตเพิ่มเกินโควตาและระบุเหตุผลอย่างน้อย 5 ตัวอักษร',409,'CLUB_FULL');
+  if(p.override_capacity===true && reason.length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร');
+  const now=sqlNow();
+  const override=needsOverride && p.override_capacity===true && reason.length>=5;
+  const clubCapacityClause=student.club_id?`AND (?=1 OR (SELECT capacity FROM clubs WHERE id=?) IS NULL OR
+      (SELECT COUNT(*) FROM students s WHERE s.club_id=? AND s.status='active' AND NOT EXISTS
+       (SELECT 1 FROM student_archives a WHERE a.student_id=s.id)) < (SELECT capacity FROM clubs WHERE id=?))`:'';
+  const capacityParams=student.club_id?[override?1:0,student.club_id,student.club_id,student.club_id]:[];
+  const [updated,unarchived]=await db.batch([
+    db.prepare(`UPDATE students SET version=version+1,updated_at=? WHERE id=? AND version=?
+      AND EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=students.id)
+      ${clubCapacityClause}`).bind(now,studentId,version,...capacityParams),
+    db.prepare(`DELETE FROM student_archives WHERE student_id=? AND EXISTS
+      (SELECT 1 FROM students WHERE id=? AND version=?) AND changes()>0`).bind(studentId,studentId,version+1),
+    db.prepare(`INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at)
+      SELECT ?,'restore','student',?,?,? FROM students WHERE id=? AND version=? AND changes()>0`)
+      .bind(user.id,studentId,JSON.stringify({archived_at:archived.archived_at,archive_reason:archived.reason,override_capacity:needsOverride,reason}),now,studentId,version+1)
+  ]).then(result=>result.slice(0,2));
+  if(!updated.meta?.changes||!unarchived.meta?.changes) throw error('ข้อมูลนักเรียนถูกแก้ไขไปแล้ว กรุณาโหลดใหม่',409,'STALE');
+  return {ok:true,version:version+1};
+}
 async function listClubs(db,user) {
   const where=isAdmin(user)?'1=1':'(c.id IN(SELECT club_id FROM teacher_clubs WHERE user_id=?) OR c.id IN(SELECT club_id FROM students WHERE room_id IN(SELECT room_id FROM teacher_rooms WHERE user_id=?)))';
   const args=isAdmin(user)?[]:[user.id,user.id];
   const rows=await db.prepare(`SELECT c.id,c.year,c.name,c.capacity,c.active,COUNT(s.id) AS members
-    FROM clubs c LEFT JOIN students s ON s.club_id=c.id AND s.status='active'
+    FROM clubs c LEFT JOIN students s ON s.club_id=c.id AND s.status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
     WHERE ${where} GROUP BY c.id ORDER BY c.year DESC,c.name`).bind(...args).all();
   return rows.results;
 }
@@ -307,7 +386,7 @@ async function exportStudents(db,user) {
   const args=isAdmin(user)?[]:[user.id,user.id];
   const list=await db.prepare(`SELECT s.student_no,s.prefix,s.first_name,s.last_name,r.year,r.grade,r.room_no,c.name AS club_name
     FROM students s JOIN rooms r ON s.room_id=r.id LEFT JOIN clubs c ON c.id=s.club_id
-    WHERE ${where} AND s.status='active' ORDER BY r.grade,r.room_no,s.student_no`).bind(...args).all();
+    WHERE ${where} AND s.status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id) ORDER BY r.grade,r.room_no,s.student_no`).bind(...args).all();
   const safe = v => { const s=String(v??''); return /^[\s]*[=+\-@\t\r]/.test(s)?`'${s}`:s; };
   const quoted = v => `"${safe(v).replaceAll('"','""')}"`;
   all.push(['เลขประจำตัว','คำนำหน้า','ชื่อ','นามสกุล','ปีการศึกษา','ระดับชั้น','ห้อง','ชุมนุม'].map(quoted).join(','));
@@ -326,7 +405,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.1.1'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.2.0'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -350,9 +429,12 @@ export async function onRequest({request,env}) {
     if(route==='clubs' && request.method==='GET')return json({items:await listClubs(db,user)});
     if(route==='clubs' && request.method==='POST')return json(await clubSave(db,user,request,null),201);
     if(route.startsWith('clubs/')&&request.method==='PATCH')return json(await clubSave(db,user,request,route.split('/')[1]));
+    if(route==='students/archived'&&request.method==='GET')return json(await listArchivedStudents(db,user,url));
     if(route==='students'&&request.method==='GET')return json(await listStudents(db,user,url));
     if(route==='students'&&request.method==='POST')return json(await createStudent(db,user,request),201);
     if(route.startsWith('students/')&&request.method==='PATCH')return json(await updateStudent(db,user,route.split('/')[1],request));
+    if(/^students\/[^/]+\/archive$/.test(route)){requireMethod(request.method,'POST');return json(await archiveStudent(db,user,route.split('/')[1],request));}
+    if(/^students\/[^/]+\/restore$/.test(route)){requireMethod(request.method,'POST');return json(await restoreStudent(db,user,route.split('/')[1],request));}
     if(route==='memberships'&&request.method==='POST')return json(await transferClub(db,user,request));
     if(route==='users'&&request.method==='GET')return json(await listUsers(db,user));
     if(route==='users'&&request.method==='POST')return json(await addUser(db,user,request),201);

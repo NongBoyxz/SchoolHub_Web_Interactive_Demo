@@ -1,9 +1,11 @@
-// SchoolHub Live v1.1 — authenticated UI; no real names/data shipped in this file.
+// SchoolHub Live v1.2 — authenticated UI; no real names/data shipped in this file.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
-const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,audit:[],page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
+const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,audit:[],archived:[],page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const allAdmin=()=>['super_admin','admin'].includes(state.user?.role);
 const currentRole=()=>({super_admin:'Super Admin',admin:'Admin',teacher:'Teacher'}[state.user?.role]||'');
+const schoolName='โรงเรียนเทพศาลาประชาสรรค์';
+const brandMark=(extra='')=>`<img class="school-mark ${extra}" src="/assets/school-logo.png" alt="ตราโรงเรียนเทพศาลาประชาสรรค์"/>`;
 const clubName=id=>state.clubs.find(x=>x.id===id)?.name||'ยังไม่กำหนด';
 const roomName=id=>{const r=state.rooms.find(x=>x.id===id);return r?`ม.${r.grade}/${r.room_no}`:'—';};
 const getForm = form => Object.fromEntries(new FormData(form).entries());
@@ -36,10 +38,10 @@ document.querySelector('#modal-close').onclick=()=>modal.close();
 function renderLogin(setup=false,loadError=''){
  state.user=null;
  root.innerHTML=`<div class="login-bg"><main class="login-panel">
-   <div class="brand"><div class="logo">S</div><span>SchoolHub <small class="mini muted">Live</small></span></div>
+   <div class="brand brand-login">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live</small></span></div>
    <div class="tag neutral">GitHub + Cloudflare Pages + D1</div>
    <h1 style="margin-top:22px">${setup?'ตั้งค่า Super Admin ครั้งแรก':'เข้าสู่ระบบ SchoolHub'}</h1>
-   <p class="sub" style="margin-top:5px">${setup?'ผู้ติดตั้งระบบต้องมีรหัสติดตั้งที่ตั้งไว้ใน Cloudflare':'สำหรับครูและผู้ดูแลระบบของโรงเรียนเท่านั้น'}</p>
+   <p class="sub" style="margin-top:5px">${setup?'ผู้ติดตั้งระบบต้องมีรหัสติดตั้งที่ตั้งไว้ใน Cloudflare':'สำหรับครูและผู้ดูแลระบบของโรงเรียนเทพศาลาประชาสรรค์เท่านั้น'}</p>
    <form id="login-form">
      ${setup?htmlField('setupToken','รหัสติดตั้ง (BOOTSTRAP_TOKEN)'):''}
      ${setup?htmlField('display_name','ชื่อผู้ดูแลระบบ'):''}
@@ -62,12 +64,12 @@ function passwordDialog(){
 }
 function navItem(key,emoji,label){return `<button class="nav-btn ${state.tab===key?'active':''}" data-tab="${key}"><span class="emoji">${emoji}</span>${esc(label)}</button>`;}
 function shell(content){
- const nav=[['dashboard','▦','ภาพรวม'],['students','👥','นักเรียน'],['clubs','🎯','ชุมนุม'],['rooms','🏫','ห้องเรียน'],['export','📥','ส่งออกรายงาน'],...(allAdmin()?[['users','🔐','บัญชีและสิทธิ์'],['audit','🕘','ประวัติการแก้ไข']]:[])];
- root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand"><div class="logo">S</div>SchoolHub</div><p class="sub">Cloudflare Live v1.1</p></div>
+ const nav=[['dashboard','▦','ภาพรวม'],['students','👥','นักเรียน'],...(allAdmin()?[['archived','🗂️','รายการนักเรียนที่นำออก']]:[]),['clubs','🎯','ชุมนุม'],['rooms','🏫','ห้องเรียน'],['export','📥','ส่งออกรายงาน'],...(allAdmin()?[['users','🔐','บัญชีและสิทธิ์'],['audit','🕘','ประวัติการแก้ไข']]:[])];
+ root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.2</small></span></div></div>
  <nav class="nav">${nav.map(([key,emoji,label])=>navItem(key,emoji,label)).join('')}</nav>
  <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button><p class="mini" style="color:#a4c0df;margin-top:18px">เว็บจำลองเดิม <a style="color:white" href="/">เปิดที่นี่</a></p></div></aside>
- <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>SchoolHub <span class="muted mini">/ ระบบข้อมูลโรงเรียน</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
- <main class="page">${content}<p class="footer-note">SchoolHub Cloudflare v1.1 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
+ <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
+ <main class="page">${content}<p class="footer-note">SchoolHub Cloudflare v1.2 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
  root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;loadTab();});
  root.querySelector('#change-password').onclick=()=>passwordDialog();
  root.querySelector('#logout').onclick=async()=>{try{await post('auth/logout',{});}catch{}state.user=null;renderLogin();};
@@ -76,7 +78,7 @@ function shell(content){
 const title=(heading,sub,actions='')=>`<div class="page-heading"><div><h2>${heading}</h2><p class="sub">${sub}</p></div><div class="actions">${actions}</div></div>`;
 const table=(headers,rows)=>`<div class="card" style="padding:0"><div class="table-wrap"><table class="data-table"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${headers.length}" class="empty">ยังไม่มีรายการ</td></tr>`}</tbody></table></div></div>`;
 function renderDashboard(){const d=state.dashboard||{};const stats=[['👨‍🎓','นักเรียนในขอบเขต',d.students],['🎯','ชุมนุม',d.clubs],['🏫','ห้องเรียน',d.rooms],['👩‍🏫','ครูที่ใช้งาน',d.teachers??'—']];
- shell(`${title('ภาพรวมโรงเรียน','ข้อมูลล่าสุดจากฐานข้อมูล D1 เมื่อเปิดหน้าเว็บไซต์')}
+ shell(`${title('ภาพรวมโรงเรียน','ข้อมูลล่าสุดจากฐานข้อมูล D1 • โรงเรียนเทพศาลาประชาสรรค์')}
  <div class="kpis">${stats.map(([ico,label,n])=>`<div class="card kpi"><div class="symbol">${ico}</div><p class="sub">${label}</p><div class="number">${n??0}</div></div>`).join('')}</div>
  <div class="split section"><section class="card stack"><h3>เริ่มจัดการข้อมูล</h3><p class="sub">ข้อมูลถูกบันทึกในฐานข้อมูลจริง ไม่หายเมื่อรีเฟรช</p>
    <div class="actions"><button class="btn primary" data-goto="students">จัดการนักเรียน →</button><button class="btn" data-goto="clubs">ดูชุมนุม</button><button class="btn" data-goto="export">ส่งออก CSV</button></div></section>
@@ -86,7 +88,7 @@ function renderDashboard(){const d=state.dashboard||{};const stats=[['👨‍�
 function selectRoomOptions(placeholder='ทุกห้อง',id=''){return `<option value="">${esc(placeholder)}</option>`+state.rooms.map(r=>`<option value="${esc(r.id)}" ${String(id)===String(r.id)?'selected':''}>ม.${r.grade}/${r.room_no} (${r.year})</option>`).join('');}
 function selectClubOptions(placeholder='ทุกชุมนุม',id=''){return `<option value="">${esc(placeholder)}</option>`+state.clubs.filter(c=>c.active).map(c=>`<option value="${esc(c.id)}" ${String(id)===String(c.id)?'selected':''}>${esc(c.name)} ${c.capacity?`(${c.members}/${c.capacity})`:''}</option>`).join('');}
 function renderStudents(){const rows=state.students.map(s=>`<tr><td><strong>${esc(s.student_no)}</strong></td><td>${esc(s.prefix+' '+s.first_name+' '+s.last_name)}</td><td>ม.${s.grade}/${s.room_no}</td><td>${esc(s.club_name||'ยังไม่มีชุมนุม')}</td><td><span class="tag neutral">v${s.version}</span></td>
-  <td><div class="actions">${s.can_edit_personal?`<button class="btn small" data-edit-student="${esc(s.id)}">แก้ไข</button>`:''}<button class="btn small" data-transfer="${esc(s.id)}">เปลี่ยนชุมนุม</button></div></td></tr>`).join('');
+  <td><div class="actions">${s.can_edit_personal?`<button class="btn small" data-edit-student="${esc(s.id)}">แก้ไข</button>`:''}<button class="btn small" data-transfer="${esc(s.id)}">เปลี่ยนชุมนุม</button>${allAdmin()?`<button class="btn small danger" data-archive="${esc(s.id)}">นำออก</button>`:''}</div></td></tr>`).join('');
  shell(`${title('ข้อมูลนักเรียน','ค้นหา เพิ่ม แก้ไข หรือย้ายชุมนุม โดยบันทึกข้อมูลจริง',`<button class="btn primary" id="add-student" ${!state.rooms.length?'disabled':''}>+ เพิ่มนักเรียน</button>`)}
  <div class="card"><div class="filters"><input id="search" aria-label="ค้นหานักเรียน" placeholder="ค้นหาจากชื่อ เลขประจำตัว…" value="${esc(state.query)}"/><select id="room-filter" aria-label="เลือกห้อง">${selectRoomOptions('ทุกห้อง',state.roomFilter)}</select><select id="club-filter" aria-label="เลือกชุมนุม">${selectClubOptions('ทุกชุมนุม',state.clubFilter)}</select><button id="apply-filter" class="btn primary">ค้นหา</button></div>
  <p class="sub">แสดงครั้งละ 50 รายการ • เลขประจำตัวซ้ำไม่สามารถบันทึกได้ • การแก้ไขใช้ระบบตรวจเวอร์ชัน</p></div>
@@ -99,11 +101,60 @@ function renderStudents(){const rows=state.students.map(s=>`<tr><td><strong>${es
  root.querySelector('#next-page').onclick=()=>{state.page++;loadTab();};
  root.querySelectorAll('[data-edit-student]').forEach(b=>b.onclick=()=>studentDialog(state.students.find(s=>s.id===b.dataset.editStudent)));
  root.querySelectorAll('[data-transfer]').forEach(b=>b.onclick=()=>transferDialog(state.students.find(s=>s.id===b.dataset.transfer)));
+ root.querySelectorAll('[data-archive]').forEach(b=>b.onclick=()=>archiveDialog(state.students.find(s=>s.id===b.dataset.archive)));
+}
+function archiveDialog(student){
+ if(!allAdmin())return;
+ const fullName=`${student.prefix} ${student.first_name} ${student.last_name}`.trim();
+ const fields=`<div class="warning-box"><strong>นำออกจากรายการใช้งาน (Soft Delete)</strong><p class="sub">${esc(fullName)} • เลขประจำตัว ${esc(student.student_no)} • ${esc(roomName(student.room_id))}</p>
+ <p class="mini">ข้อมูลนักเรียน ชุมนุม และประวัติจะยังอยู่ใน D1 และสามารถกู้คืนผ่านเมนูรายการนักเรียนที่นำออกได้</p></div>
+ ${htmlField('reason','เหตุผลการนำออก (อย่างน้อย 5 ตัวอักษร)','',{max:200})}
+ <label class="checkbox-inline"><input type="checkbox" name="confirm_archive" required/><span>ยืนยันนำออกจากรายการใช้งาน</span></label>`;
+ showModal('ยืนยันนำออกจากรายการ',fields,async p=>{
+   if(String(p.reason||'').trim().length<5)throw new Error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร');
+   await post('students/'+student.id+'/archive',{version:student.version,reason:p.reason});
+ });
+}
+function restoreDialog(student){
+ if(!allAdmin())return;
+ const fields=`<div class="banner"><strong>กู้คืนนักเรียน</strong><p class="sub">${esc(student.prefix+' '+student.first_name+' '+student.last_name)} • ${esc(student.student_no)}</p>
+ <p class="mini">นักเรียนจะกลับสู่ห้องและชุมนุมเดิม โดยระบบจะเก็บประวัติการนำออก/กู้คืนไว้</p></div>
+ ${student.club_id?capacityOverrideFields('อนุญาตกู้คืนเกินโควตาชุมนุมเดิม (Admin เท่านั้น)'):''}
+ <label class="checkbox-inline"><input type="checkbox" name="confirm_restore" required/><span>ยืนยันกู้คืนข้อมูลนักเรียน</span></label>`;
+ showModal('กู้คืนนักเรียน',fields,async(p,form)=>{await post('students/'+student.id+'/restore',{version:student.version,reason:p.reason||'',override_capacity:!!form.querySelector('[name=override_capacity]:checked')});});
+ activateOverrideValidation();
+}
+function renderArchived(){
+ const rows=state.archived.map(s=>`<tr><td><strong>${esc(s.student_no)}</strong></td><td>${esc(s.prefix+' '+s.first_name+' '+s.last_name)}</td>
+ <td>ม.${s.grade}/${s.room_no}</td><td>${esc(s.archived_by_name)}</td><td>${esc(new Date(s.archived_at).toLocaleString('th-TH'))}</td>
+ <td class="reason-cell">${esc(s.reason)}</td><td><button class="btn small primary" data-restore="${esc(s.id)}">กู้คืน</button></td></tr>`).join('');
+ shell(`${title('รายการนักเรียนที่นำออก','สำหรับ Admin และ Super Admin เท่านั้น • ยังเก็บข้อมูลและประวัติอยู่ในฐานข้อมูล', '<button class="btn" id="back-to-students">← กลับหน้ารายชื่อ</button>')}
+ <div class="card"><div class="filters"><input id="archive-search" placeholder="ค้นหาชื่อหรือเลขประจำตัว…" aria-label="ค้นหารายการที่นำออก" value="${esc(state.query)}"/><button class="btn primary" id="search-archives">ค้นหา</button></div>
+ <p class="sub">นำออกแบบ Soft Delete ไม่ลบประวัติ • เลขประจำตัวเดิมยังถูกสงวนไว้ • คืนข้อมูลผ่านปุ่มกู้คืน</p></div>
+ <div class="section">${table(['เลขประจำตัว','ชื่อ–นามสกุล','ห้อง','นำออกโดย','วันเวลา','เหตุผล','จัดการ'],rows)}</div>
+ <div class="row between section"><p class="sub">หน้า ${state.page}</p><div class="actions"><button class="btn" id="archive-prev" ${state.page===1?'disabled':''}>← ก่อนหน้า</button><button class="btn" id="archive-next" ${state.archived.length<50?'disabled':''}>หน้าถัดไป →</button></div></div>`);
+ root.querySelector('#back-to-students').onclick=()=>{state.tab='students';state.page=1;state.query='';loadTab();};
+ root.querySelector('#search-archives').onclick=()=>{state.query=root.querySelector('#archive-search').value.trim();state.page=1;loadTab();};
+ root.querySelector('#archive-search').onkeydown=e=>{if(e.key==='Enter')root.querySelector('#search-archives').click();};
+ root.querySelector('#archive-prev').onclick=()=>{state.page=Math.max(1,state.page-1);loadTab();};
+ root.querySelector('#archive-next').onclick=()=>{state.page++;loadTab();};
+ root.querySelectorAll('[data-restore]').forEach(b=>b.onclick=()=>restoreDialog(state.archived.find(s=>s.id===b.dataset.restore)));
+}
+function capacityOverrideFields(label='Admin: อนุญาตเพิ่มเกินโควตา'){
+ return `<div class="override-area"><label class="checkbox-inline"><input type="checkbox" name="override_capacity"/><span>${esc(label)}</span></label>
+ ${htmlField('reason','เหตุผลกรณีเกินโควตา','',{required:false,max:200})}
+ <p class="reason-help" id="override-reason-help">⚠️ หากติ๊กอนุญาตเพิ่มเกินโควตา ต้องกรอกเหตุผลอย่างน้อย 5 ตัวอักษร</p></div>`;
+}
+function activateOverrideValidation(){
+ const checkbox=modal.querySelector('[name=override_capacity]'),reason=modal.querySelector('[name=reason]');
+ if(!checkbox||!reason)return;
+ const update=()=>{reason.required=checkbox.checked;reason.minLength=checkbox.checked?5:0;};
+ checkbox.addEventListener('change',update);update();
 }
 function studentDialog(student){
  const editing=!!student,optsRooms=state.rooms.map(r=>({id:r.id,label:`ม.${r.grade}/${r.room_no}`}));
  const overrideFields=(!editing && allAdmin())
-   ? `<label class="row"><input type="checkbox" name="override_capacity" style="width:auto;min-height:0"/> Admin: อนุญาตเพิ่มเกินโควตา</label>${htmlField('reason','เหตุผลกรณีเกินโควตา','',{required:false})}`
+   ? capacityOverrideFields()
    : '';
  const fields=`<div class="grid2">${htmlField('student_no','เลขประจำตัวนักเรียน',student?.student_no||'')}${htmlField('prefix','คำนำหน้า',student?.prefix||'นาย',{required:false})}
  ${htmlField('first_name','ชื่อ',student?.first_name||'')}${htmlField('last_name','นามสกุล',student?.last_name||'')}
@@ -115,16 +166,18 @@ function studentDialog(student){
    if(editing)await patch('students/'+student.id,{...p,version:student.version});
    else await post('students',{...p,club_id:p.club_id||null,override_capacity:!!form.querySelector('[name=override_capacity]:checked')});
  });
+ activateOverrideValidation();
 }
 function transferDialog(student){
  const choices=[{id:'',label:'ยังไม่สังกัดชุมนุม'},...state.clubs.filter(c=>c.active).map(c=>({id:c.id,label:`${c.name} (${c.capacity?c.members+'/'+c.capacity:'ไม่จำกัด'})`}))];
  const fields=`<p class="sub">${esc(student.prefix+' '+student.first_name+' '+student.last_name)} • ${esc(roomName(student.room_id))}</p>
  ${htmlField('club_id','เลือกชุมนุมใหม่',student.club_id||'',{type:'select',items:choices,required:false})}
- ${allAdmin()?`<label class="row"><input name="override_capacity" type="checkbox" style="width:auto;min-height:0"/> อนุญาตเพิ่มเกินโควตา (Admin เท่านั้น)</label>${htmlField('reason','เหตุผล (จำเป็นถ้าเกินโควตา)','',{required:false})}`:htmlField('reason','หมายเหตุการย้าย (ถ้ามี)','',{required:false})}
+ ${allAdmin()?capacityOverrideFields('อนุญาตเพิ่มเกินโควตา (Admin เท่านั้น)'):htmlField('reason','หมายเหตุการย้าย (ถ้ามี)','',{required:false})}
  <p class="form-note">ระบบย้ายชุมนุมทันทีและเก็บประวัติ • สมาชิกชุมนุมเดิมจะถูกนำออกอัตโนมัติ</p>`;
  showModal('เปลี่ยนชุมนุม',fields,async(p,form)=>{
    await post('memberships',{student_id:student.id,club_id:p.club_id||null,version:student.version,reason:p.reason||'',override_capacity:!!form.querySelector('[name=override_capacity]:checked')});
  });
+ activateOverrideValidation();
 }
 function renderClubs(){const rows=state.clubs.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${c.year}</td><td>${c.members}</td><td>${c.capacity??'ไม่จำกัด'}</td><td><span class="tag ${c.active?'':'warning'}">${c.active?(c.capacity&&c.members>=c.capacity?'เต็ม / จำกัด':'เปิดใช้งาน'):'ปิดใช้งาน'}</span></td><td>${allAdmin()?`<button class="btn small" data-edit-club="${esc(c.id)}">แก้ไข</button>`:'—'}</td></tr>`).join('');
  shell(`${title('ชุมนุม','จำนวนสมาชิกอ่านจากฐานข้อมูลจริง และตรวจโควตาก่อนเพิ่ม',allAdmin()?'<button class="btn primary" id="add-club">+ เพิ่มชุมนุม</button>':'')}${table(['ชื่อชุมนุม','ปี','สมาชิก','จำนวนสูงสุด','สถานะ','จัดการ'],rows)}`);
@@ -183,6 +236,7 @@ async function loadTab(reload=false){if(!state.user)return;
    const [rooms,clubs]=await Promise.all([api('rooms'),api('clubs')]);state.rooms=rooms.items;state.clubs=clubs.items;
    switch(state.tab){
     case 'dashboard':state.dashboard=await api('dashboard');renderDashboard();break;
+    case 'archived':{if(!allAdmin()){state.tab='dashboard';return loadTab();}const params=new URLSearchParams({page:String(state.page),q:state.query});state.archived=(await api('students/archived?'+params)).items;renderArchived();break;}
     case 'students':{const params=new URLSearchParams({page:String(state.page),q:state.query,room_id:state.roomFilter,club_id:state.clubFilter});state.students=(await api('students?'+params)).items;renderStudents();break;}
     case 'clubs':renderClubs();break;
     case 'rooms':renderRooms();break;
@@ -195,5 +249,5 @@ async function loadTab(reload=false){if(!state.user)return;
 }
 async function start(){try{const status=await api('status');if(status.setup_required){renderLogin(true);return;}
  const me=await api('auth/me').catch(e=>{if(e.status===401)return null;throw e;});if(me?.user){state.user=me.user;await loadTab();}else renderLogin();
- }catch(err){root.innerHTML=`<div class="login-bg"><div class="login-panel stack"><div class="brand"><div class="logo">S</div>SchoolHub</div><h1>ยังไม่พร้อมเชื่อม Cloudflare</h1><p class="warning-box">${esc(err.message)}</p><p class="sub">ตรวจว่า Cloudflare Pages เชื่อม D1 binding ชื่อ <strong>DB</strong> และรัน migration แล้ว</p><a href="/">กลับเว็บจำลอง</a><button class="btn" id="retry-start">ลองเชื่อมต่อใหม่</button></div></div>`;root.querySelector('#retry-start').onclick=start;}}
+ }catch(err){root.innerHTML=`<div class="login-bg"><div class="login-panel stack"><div class="brand brand-login">${brandMark()}<span>${schoolName}</span></div><h1>ยังไม่พร้อมเชื่อม Cloudflare</h1><p class="warning-box">${esc(err.message)}</p><p class="sub">ตรวจว่า Cloudflare Pages เชื่อม D1 binding ชื่อ <strong>DB</strong> และรัน migration แล้ว</p><a href="/">กลับเว็บจำลอง</a><button class="btn" id="retry-start">ลองเชื่อมต่อใหม่</button></div></div>`;root.querySelector('#retry-start').onclick=start;}}
 start();
