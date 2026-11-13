@@ -1,6 +1,7 @@
-// SchoolHub Live v1.2 — authenticated UI; no real names/data shipped in this file.
+import {readSchoolImport} from './xlsx-reader.js';
+// SchoolHub Live v1.3 — authenticated UI; no real names/data shipped in this file.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
-const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,audit:[],archived:[],page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
+const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,audit:[],archived:[],importHistory:[],importDraft:null,page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const allAdmin=()=>['super_admin','admin'].includes(state.user?.role);
 const currentRole=()=>({super_admin:'Super Admin',admin:'Admin',teacher:'Teacher'}[state.user?.role]||'');
@@ -64,12 +65,12 @@ function passwordDialog(){
 }
 function navItem(key,emoji,label){return `<button class="nav-btn ${state.tab===key?'active':''}" data-tab="${key}"><span class="emoji">${emoji}</span>${esc(label)}</button>`;}
 function shell(content){
- const nav=[['dashboard','▦','ภาพรวม'],['students','👥','นักเรียน'],...(allAdmin()?[['archived','🗂️','รายการนักเรียนที่นำออก']]:[]),['clubs','🎯','ชุมนุม'],['rooms','🏫','ห้องเรียน'],['export','📥','ส่งออกรายงาน'],...(allAdmin()?[['users','🔐','บัญชีและสิทธิ์'],['audit','🕘','ประวัติการแก้ไข']]:[])];
- root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.2</small></span></div></div>
+ const nav=[['dashboard','▦','ภาพรวม'],...(allAdmin()?[['import','📥','นำเข้า Excel']]:[]),['students','👥','นักเรียน'],...(allAdmin()?[['archived','🗂️','รายการนักเรียนที่นำออก']]:[]),['clubs','🎯','ชุมนุม'],['rooms','🏫','ห้องเรียน'],['export','📥','ส่งออกรายงาน'],...(allAdmin()?[['users','🔐','บัญชีและสิทธิ์'],['audit','🕘','ประวัติการแก้ไข']]:[])];
+ root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.3</small></span></div></div>
  <nav class="nav">${nav.map(([key,emoji,label])=>navItem(key,emoji,label)).join('')}</nav>
  <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button><p class="mini" style="color:#a4c0df;margin-top:18px">เว็บจำลองเดิม <a style="color:white" href="/">เปิดที่นี่</a></p></div></aside>
  <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
- <main class="page">${content}<p class="footer-note">SchoolHub Cloudflare v1.2 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
+ <main class="page">${content}<p class="footer-note">SchoolHub Cloudflare v1.3 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
  root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;loadTab();});
  root.querySelector('#change-password').onclick=()=>passwordDialog();
  root.querySelector('#logout').onclick=async()=>{try{await post('auth/logout',{});}catch{}state.user=null;renderLogin();};
@@ -82,7 +83,7 @@ function renderDashboard(){const d=state.dashboard||{};const stats=[['👨‍�
  <div class="kpis">${stats.map(([ico,label,n])=>`<div class="card kpi"><div class="symbol">${ico}</div><p class="sub">${label}</p><div class="number">${n??0}</div></div>`).join('')}</div>
  <div class="split section"><section class="card stack"><h3>เริ่มจัดการข้อมูล</h3><p class="sub">ข้อมูลถูกบันทึกในฐานข้อมูลจริง ไม่หายเมื่อรีเฟรช</p>
    <div class="actions"><button class="btn primary" data-goto="students">จัดการนักเรียน →</button><button class="btn" data-goto="clubs">ดูชุมนุม</button><button class="btn" data-goto="export">ส่งออก CSV</button></div></section>
-   <section class="card stack"><h3>ขอบเขตของเวอร์ชันนี้</h3><p class="sub">✅ ล็อกอิน • D1 • นักเรียน/ชุมนุม • สิทธิ์ครู • ประวัติ • CSV</p><p class="sub">⏳ Google Login, XLSX import, เช็กชื่อรายสัปดาห์ และประเมินผลจะเพิ่มเป็นระยะ</p></section></div>`);
+   <section class="card stack"><h3>ขอบเขตของเวอร์ชันนี้</h3><p class="sub">✅ ล็อกอิน • D1 • นักเรียน/ชุมนุม • สิทธิ์ครู • นำเข้า XLSX/CSV • ประวัติ</p><p class="sub">⏳ Google Login, นำเข้าไฟล์โรงเรียนเดิมโดยตรง, เช็กชื่อรายสัปดาห์ และประเมินผลจะเพิ่มเป็นระยะ</p></section></div>`);
  root.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.goto;loadTab();});
 }
 function selectRoomOptions(placeholder='ทุกห้อง',id=''){return `<option value="">${esc(placeholder)}</option>`+state.rooms.map(r=>`<option value="${esc(r.id)}" ${String(id)===String(r.id)?'selected':''}>ม.${r.grade}/${r.room_no} (${r.year})</option>`).join('');}
@@ -202,7 +203,8 @@ function renderRooms(){const rows=state.rooms.map(r=>`<tr><td>ม.${r.grade}/${r
 function renderExport(){shell(`${title('ส่งออกรายงาน','ข้อมูลจริงจากฐานข้อมูล Cloudflare D1')}
  <div class="split"><div class="card stack"><h3>ดาวน์โหลดรายชื่อนักเรียน</h3><p class="sub">เปิดได้ด้วย Microsoft Excel โดยเลือกเข้ารหัส UTF-8 และมีการป้องกันสูตรอันตรายในเซลล์</p>
  <div class="actions"><button class="btn primary" id="export-csv">📥 ดาวน์โหลด CSV</button></div><div class="hint">ครูทั่วไปจะดาวน์โหลดได้เฉพาะนักเรียนในห้องหรือชุมนุมที่ได้รับมอบหมาย ผู้ดูแลระบบดาวน์โหลดได้ทั้งโรงเรียน</div></div>
- <div class="card stack"><h3>นำเข้า Excel / XLSX</h3><span class="tag warning" style="align-self:flex-start">ยังไม่เปิดใช้งานใน v1.1</span><p class="sub">การนำเข้าพร้อมตรวจสอบข้อมูลซ้ำ/เวอร์ชันและพรีวิวก่อนบันทึกเป็นงานระยะถัดไป ห้ามใช้โหมดสาธิตเดิมนำเข้าข้อมูลจริง</p><p class="sub">สำหรับตอนนี้เพิ่มหรือแก้ไขรายชื่อผ่านเมนูนักเรียนได้อย่างปลอดภัยกว่า</p></div></div>`);
+ <div class="card stack"><h3>นำเข้า Excel / XLSX</h3><span class="tag">รองรับ .xlsx / .csv</span><p class="sub">ใช้แบบฟอร์ม SchoolHub แล้วตรวจข้อมูลรายห้องก่อนบันทึกใน D1</p>${allAdmin()?'<button class="btn primary" id="go-import">เปิดระบบนำเข้า →</button>':'<p class="sub">การนำเข้ารุ่นนี้จำกัดเฉพาะ Admin/Super Admin</p>'}</div></div>`);
+ if(allAdmin())root.querySelector('#go-import').onclick=()=>{state.tab='import';loadTab();};
  root.querySelector('#export-csv').onclick=async()=>{
   try{const r=await fetch('/api/export/students',{credentials:'same-origin'});if(!r.ok){throw new Error((await r.json()).error||'ดาวน์โหลดไม่สำเร็จ');}
     const blob=await r.blob(),obj=URL.createObjectURL(blob),a=document.createElement('a');a.href=obj;a.download='schoolhub-students.csv';a.click();URL.revokeObjectURL(obj);notify('ส่งออกรายชื่อเรียบร้อย');}
@@ -230,6 +232,85 @@ function assignDialog(user){const ur=state.teacher_rooms.filter(x=>x.user_id===u
 function renderAudit(){const rows=state.audit.map(x=>`<tr><td>${esc(new Date(x.at).toLocaleString('th-TH'))}</td><td>${esc(x.actor)}</td><td>${esc(x.action)}</td><td>${esc(x.entity_type)}</td><td title="${esc(x.entity_id)}">${esc(x.entity_id.slice(0,14))}</td></tr>`).join('');
  shell(`${title('ประวัติการแก้ไข','100 รายการล่าสุดจากฐานข้อมูล — ดูได้เฉพาะผู้ดูแล')}${table(['วันเวลา','ผู้ดำเนินการ','การดำเนินการ','ประเภท','รหัสรายการ'],rows)}`);
 }
+// SchoolHub v1.3 admin-only XLSX/CSV import UI. No workbook contents are published in GitHub.
+function renderImport(){
+ if(!allAdmin()){state.tab='dashboard';return renderDashboard();}
+ const previous=(state.importHistory||[]).map(run=>`<tr><td>${esc(new Date(run.created_at).toLocaleString('th-TH'))}</td><td>${esc(roomName(run.room_id))}</td><td>${run.mode==='sync'?'ซิงก์ทั้งห้อง':'เพิ่ม/อัปเดต'}</td><td>${run.added}/${run.updated}/${run.archived}</td><td>${esc(run.actor)}</td></tr>`).join('');
+ shell(`${title('นำเข้า Excel','เลือกห้องเรียนและตรวจสอบทุกการเปลี่ยนแปลงก่อนบันทึกลง D1')}
+ <section class="card stack import-panel">
+ <div class="row between"><h3>① เตรียมแบบฟอร์มรายชื่อนักเรียน</h3><a class="btn" href="/templates/SchoolHub_Import_v1.3.xlsx" download>📥 ดาวน์โหลดแบบฟอร์ม .xlsx</a></div>
+ <p class="sub">รองรับไฟล์ .xlsx หรือ .csv ตามแบบฟอร์ม โรงเรียนเทพศาลาประชาสรรค์ • จำกัดไม่เกิน 120 คนต่อครั้ง • นำเข้าได้ครั้งละหนึ่งห้อง</p>
+ <div class="warning-box mini">ไฟล์ต้นฉบับของโรงเรียนแต่ละชั้นมีรูปแบบแตกต่างกัน เวอร์ชันนี้ต้องจัดข้อมูลให้ตรงแบบฟอร์มก่อน ระบบจะไม่เดาชุมนุมที่สะกดต่างกัน และจะไม่อัปโหลดไฟล์ Excel ดิบไปยังเซิร์ฟเวอร์</div>
+ <div class="grid2">
+  <label class="field"><span>ห้องเรียนปลายทาง</span><select id="import-room" required>${state.rooms.map(r=>`<option value="${esc(r.id)}">ม.${r.grade}/${r.room_no} • ปี ${r.year}</option>`).join('')}</select></label>
+  <label class="field"><span>ไฟล์ Excel/CSV</span><input type="file" id="import-file" accept=".xlsx,.csv" required/></label>
+  <label class="field"><span>วิธีนำเข้า</span><select id="import-mode"><option value="merge">เพิ่ม/อัปเดตเท่านั้น (ไม่ลบคนที่ไม่อยู่ในไฟล์)</option><option value="sync">ซิงก์ทั้งห้อง (นำคนที่ไม่มีในไฟล์ออกแบบ Soft Delete)</option></select></label>
+  <label class="field"><span>เหตุผล (จำเป็นเมื่อซิงก์หรืออนุญาตเกินโควตา)</span><input id="import-reason" maxlength="200" placeholder="กรุณากรอกอย่างน้อย 5 ตัวอักษร"/></label>
+ </div>
+ <label class="checkbox-inline"><input id="import-override" type="checkbox"/> Super Admin/Admin: อนุญาตเพิ่มเกินโควตาเมื่อมีเหตุผล</label>
+ <p class="reason-help">กรณีเลือกอนุญาตเพิ่มเกินโควตา หรือซิงก์ทั้งห้อง ต้องกรอกเหตุผลอย่างน้อย 5 ตัวอักษร</p>
+ <div class="actions"><button id="import-preview" class="btn primary">🔎 ตรวจสอบข้อมูลก่อนนำเข้า</button><button id="import-reset" class="btn">ล้างพรีวิว</button></div>
+ <div id="import-feedback" class="mini" role="status" aria-live="polite"></div>
+ </section>
+ <section class="section" id="import-result" hidden></section>
+ <section class="card section stack"><h3>ประวัติการนำเข้าสำเร็จ (30 รายการล่าสุด)</h3>
+ <div class="table-wrap"><table class="data-table"><thead><tr><th>วันที่</th><th>ห้อง</th><th>โหมด</th><th>เพิ่ม / แก้ / นำออก</th><th>ผู้ดำเนินการ</th></tr></thead><tbody>${previous||'<tr><td colspan="5" class="empty">ยังไม่มีการนำเข้า</td></tr>'}</tbody></table></div></section>`);
+ const $=id=>root.querySelector('#'+id),clear=()=>{$('import-result').hidden=true;$('import-result').innerHTML='';state.importDraft=null;};
+ ['import-file','import-room','import-mode','import-reason','import-override'].forEach(id=>$(id).addEventListener('change',clear));
+ $('import-reset').onclick=()=>{clear();$('import-file').value='';$('import-feedback').textContent='ล้างข้อมูลพรีวิวแล้ว';};
+ $('import-preview').onclick=async()=>{
+  const button=$('import-preview'),file=$('import-file').files[0];clear();
+  if(!file){$('import-feedback').textContent='กรุณาเลือกไฟล์ก่อน';return;}
+  button.disabled=true;$('import-feedback').textContent='กำลังอ่านไฟล์และตรวจสอบกับฐานข้อมูล…';
+  try{
+   const rows=await readSchoolImport(file);
+   const payload={rows,room_id:$('import-room').value,mode:$('import-mode').value,
+     reason:$('import-reason').value.trim(),override_capacity:$('import-override').checked};
+   const result=await post('import/preview',payload);
+   state.importDraft={payload,preview_hash:result.preview_hash};
+   renderImportPreview(result);
+   $('import-feedback').textContent=`อ่านไฟล์ ${file.name} ได้ ${rows.length} แถว • พบข้อผิดพลาด ${result.summary.errors} รายการ`;
+  }catch(e){$('import-feedback').textContent='เกิดข้อผิดพลาด: '+e.message;notify(e.message);}finally{button.disabled=false;}
+ };
+}
+function renderImportPreview(data){
+ const container=root.querySelector('#import-result');container.hidden=false;
+ const label={add:'เพิ่มใหม่',update:'ปรับปรุง',unchanged:'ไม่เปลี่ยน',archive:'นำออก (Soft Delete)',error:'ผิดพลาด'};
+ const summary=data.summary;
+ const rows=data.items.map(r=>`<tr><td>${r.line||'—'}</td><td>${esc(r.student_no)}</td><td>${esc(r.student_name)}</td>
+   <td><span class="tag ${r.action==='error'||r.action==='archive'?'warning':r.action==='unchanged'?'neutral':''}">${label[r.action]||esc(r.action)}</span></td><td class="reason-cell">${esc(r.detail)}</td></tr>`).join('');
+ const errs=data.errors.filter(e=>!data.items.includes(e));
+ container.innerHTML=`<div class="card stack"><div class="row between"><h3>② ตัวอย่างการเปลี่ยนแปลง • ม.${data.room.grade}/${data.room.room_no}</h3><span class="tag ${summary.errors?'warning':''}">${summary.errors?'มีข้อผิดพลาด':'พร้อมยืนยัน'}</span></div>
+ <div class="import-stats"><span class="tag">เพิ่ม ${summary.add}</span><span class="tag neutral">แก้ไข ${summary.update}</span><span class="tag neutral">ไม่เปลี่ยน ${summary.unchanged}</span><span class="tag warning">นำออก ${summary.archive}</span><span class="tag ${summary.errors?'warning':'neutral'}">ผิดพลาด ${summary.errors}</span></div>
+ ${errs.length?`<div class="warning-box">${errs.map(e=>`<div>${esc(e.detail)}</div>`).join('')}</div>`:''}
+ <div class="table-wrap"><table class="data-table"><thead><tr><th>แถว</th><th>เลขประจำตัว</th><th>ชื่อ-นามสกุล</th><th>การดำเนินการ</th><th>รายละเอียด</th></tr></thead><tbody>${rows}</tbody></table></div>
+ ${data.mode==='sync'?`<div class="sync-confirm"><h3>⚠️ โหมดซิงก์ทั้งห้อง</h3><p>นักเรียนที่ไม่อยู่ในไฟล์จำนวน <strong>${summary.archive}</strong> คน จะถูกนำออกจากรายการใช้งาน (ไม่ลบถาวร)</p>
+ <label class="checkbox-inline"><input id="import-ack" type="checkbox"/> ยืนยันว่าได้ตรวจสอบรายชื่อที่จะนำออกทั้งหมดแล้ว</label>
+ <label class="field"><span>พิมพ์รหัสห้อง <strong>${esc(data.room.id)}</strong> เพื่อยืนยัน</span><input id="import-confirm" autocomplete="off" placeholder="${esc(data.room.id)}"/></label></div>`:''}
+ <div class="row between"><span class="sub">หากครูคนอื่นแก้ไขข้อมูลก่อนกดบันทึก ระบบจะให้พรีวิวใหม่ก่อน</span>
+ <button class="btn primary" id="import-save" ${summary.errors?'disabled':''}>✅ ยืนยันและนำเข้าข้อมูล</button></div>
+ <div id="import-save-response" role="status" class="mini"></div>
+ </div>`;
+ const button=container.querySelector('#import-save');
+ if(button)button.onclick=async()=>{
+   const draft=state.importDraft;if(!draft)return;
+   if(data.mode==='sync' && (!container.querySelector('#import-ack').checked || container.querySelector('#import-confirm').value.trim()!==data.room.id)){
+      container.querySelector('#import-save-response').textContent='กรุณาติ๊กยืนยันและพิมพ์รหัสห้องให้ถูกต้อง';return;
+   }
+   button.disabled=true;
+   container.querySelector('#import-save-response').textContent='กำลังตรวจสอบข้อมูลล่าสุดและบันทึก…';
+   try{
+     const output=await post('import/commit',{...draft.payload,preview_hash:draft.preview_hash,
+       confirm_sync:data.mode==='sync'?data.room.id:undefined,
+       acknowledge_archives:data.mode==='sync'?container.querySelector('#import-ack').checked:false});
+     notify(`นำเข้าสำเร็จ เพิ่ม ${output.summary.add} / แก้ ${output.summary.update} / นำออก ${output.summary.archive}`);
+     state.importDraft=null;state.importHistory=(await api('import/history')).items;renderImport();
+     root.querySelector('#import-feedback').textContent='บันทึกสำเร็จแล้ว • เลขที่รายการ '+output.run_id;
+   }catch(err){container.querySelector('#import-save-response').textContent='บันทึกไม่สำเร็จ: '+err.message;
+     notify(err.message);button.disabled=false;}
+ };
+}
+
 async function loadTab(reload=false){if(!state.user)return;
  loading();try{
    // Read lookup tables on every navigation to reflect latest changes across users.
@@ -237,6 +318,7 @@ async function loadTab(reload=false){if(!state.user)return;
    switch(state.tab){
     case 'dashboard':state.dashboard=await api('dashboard');renderDashboard();break;
     case 'archived':{if(!allAdmin()){state.tab='dashboard';return loadTab();}const params=new URLSearchParams({page:String(state.page),q:state.query});state.archived=(await api('students/archived?'+params)).items;renderArchived();break;}
+    case 'import':{if(!allAdmin()){state.tab='dashboard';return loadTab();}state.importHistory=(await api('import/history')).items;renderImport();break;}
     case 'students':{const params=new URLSearchParams({page:String(state.page),q:state.query,room_id:state.roomFilter,club_id:state.clubFilter});state.students=(await api('students?'+params)).items;renderStudents();break;}
     case 'clubs':renderClubs();break;
     case 'rooms':renderRooms();break;

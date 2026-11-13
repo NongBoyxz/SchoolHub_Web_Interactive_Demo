@@ -1,4 +1,4 @@
-// SchoolHub v1.2 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
+// SchoolHub v1.3 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
 const encoder = new TextEncoder();
 const MAX_BODY = 90000;
 const SESSION_SECONDS = 8 * 3600;
@@ -393,6 +393,162 @@ async function exportStudents(db,user) {
   for(const s of list.results) all.push([s.student_no,s.prefix,s.first_name,s.last_name,s.year,s.grade,s.room_no,s.club_name].map(quoted).join(','));
   return new Response('\uFEFF'+all.join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="schoolhub-students.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 }
+// SchoolHub v1.3 XLSX/CSV import: room-scoped server-side preview and atomic commit.
+// No XLSX file bytes are ever stored in public assets or in D1.
+const IMPORT_MAX_ROWS = 120;
+const normalizeClubName = v => cleanString(v,120).normalize('NFKC').replace(/\s+/g,' ').toLocaleLowerCase('th');
+function parseImportRows(raw) {
+  if(!Array.isArray(raw)||raw.length===0||raw.length>IMPORT_MAX_ROWS) throw error(`กรุณาเลือกข้อมูล 1–${IMPORT_MAX_ROWS} แถวต่อห้องเรียน`);
+  return raw.map((item,i)=>{
+    if(!item||typeof item!=='object'||Array.isArray(item))throw error(`รูปแบบข้อมูลแถว ${i+2} ไม่ถูกต้อง`);
+    const get=(key,max)=>{const value=item[key]; if(typeof value!=='string' && typeof value!=='number' && value!==undefined && value!==null)throw error(`ข้อมูลแถว ${i+2} ไม่ถูกต้อง: ${key}`);
+      const str=String(value??'').trim().normalize('NFC');if(str.length>max)throw error(`ข้อมูลแถว ${i+2} ยาวเกินกำหนด: ${key}`);return str;};
+    return {line:i+2,student_no:get('student_no',30),prefix:get('prefix',20),first_name:get('first_name',100),last_name:get('last_name',100),club_name:get('club_name',120)};
+  });
+}
+function previewRowLine(entry,action,detail='') {return {line:entry.line,student_no:entry.student_no,student_name:[entry.prefix,entry.first_name,entry.last_name].filter(Boolean).join(' '),action,detail};}
+async function importPlan(db,user,p) {
+  access(user,'super_admin','admin');
+  const roomId=required(p.room_id,'ห้องเรียน',80), mode=cleanString(p.mode,20);
+  if(!['merge','sync'].includes(mode)) throw error('กรุณาเลือกโหมดเพิ่ม/อัปเดต หรือซิงก์ทั้งห้อง');
+  const rows=parseImportRows(p.rows);
+  const room=await db.prepare('SELECT id,year,grade,room_no FROM rooms WHERE id=?').bind(roomId).first();
+  if(!room) throw error('ไม่พบห้องเรียน');
+  const existing=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.club_id,s.room_id,s.version,s.status,a.student_id AS archived
+    FROM students s LEFT JOIN student_archives a ON a.student_id=s.id WHERE s.room_id=? OR s.student_no IN (${rows.map(()=>'?').join(',')})`)
+    .bind(roomId,...rows.map(r=>r.student_no)).all();
+  const allStudents=existing.results||[],byNo=new Map(allStudents.map(s=>[s.student_no,s]));
+  const [clubsResult,countResult]=await Promise.all([
+    db.prepare('SELECT id,name,capacity,active,year FROM clubs WHERE year=?').bind(room.year).all(),
+    db.prepare(`SELECT s.club_id AS id,COUNT(*) AS n FROM students s WHERE s.status='active' AND s.club_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id) GROUP BY s.club_id`).all()
+  ]);
+  const clubs=clubsResult.results||[], clubMap=new Map(clubs.filter(c=>c.active).map(c=>[normalizeClubName(c.name),c]));
+  const counts=new Map((countResult.results||[]).map(c=>[c.id,Number(c.n)]));
+  const seen=new Set(),items=[],errors=[],ops=[],deltas=new Map();
+  const delta=(club,n)=>{if(club)deltas.set(club,(deltas.get(club)||0)+n);};
+  for(const row of rows){
+    const issues=[];
+    if(!row.student_no)issues.push('ไม่มีเลขประจำตัวนักเรียน');
+    if(!row.first_name)issues.push('ไม่มีชื่อ');
+    if(!row.last_name)issues.push('ไม่มีนามสกุล');
+    if(row.student_no){if(seen.has(row.student_no))issues.push('เลขประจำตัวซ้ำภายในไฟล์');seen.add(row.student_no);}
+    const current=byNo.get(row.student_no);
+    if(current&&current.room_id!==roomId)issues.push('เลขประจำตัวนี้อยู่คนละห้อง ต้องย้ายห้องจากเมนูนักเรียนก่อน');
+    if(current&&(current.archived||current.status!=='active'))issues.push('เลขประจำตัวนี้ไม่อยู่ในสถานะใช้งาน ต้องกู้คืนหรือแก้สถานะก่อน');
+    const clubRaw=row.club_name.trim();
+    let clubId=null;
+    if(clubRaw && clubRaw!=='-'){
+      const club=clubMap.get(normalizeClubName(clubRaw));
+      if(!club)issues.push(`ไม่พบชุมนุมที่เปิดใช้งาน: ${clubRaw} (ให้สร้างหรือแก้ชื่อก่อน)`);
+      else clubId=club.id;
+    }else if(current && !clubRaw){ clubId=current.club_id; } // blank means preserve for existing students
+    if(issues.length){const info=previewRowLine(row,'error',issues.join(' • '));items.push(info);errors.push(info);continue;}
+    if(!current){
+      ops.push({kind:'add',row,club_id:clubId});items.push(previewRowLine(row,'add',clubId?'เพิ่มพร้อมชุมนุม':'เพิ่มโดยไม่กำหนดชุมนุม'));
+      delta(clubId,1);
+    }else{
+      const updated=[row.prefix!==current.prefix,row.first_name!==current.first_name,row.last_name!==current.last_name,clubId!==current.club_id].some(Boolean);
+      if(updated){
+        ops.push({kind:'update',row,id:current.id,version:current.version,old_club_id:current.club_id,club_id:clubId});
+        delta(current.club_id,-1);delta(clubId,1);
+        items.push(previewRowLine(row,'update','แก้ไขชื่อ/คำนำหน้าหรือชุมนุม'));
+      }else items.push(previewRowLine(row,'unchanged','ข้อมูลตรงกับฐานข้อมูลแล้ว'));
+    }
+  }
+  if(mode==='sync'){
+    const scope=allStudents.filter(s=>s.room_id===roomId && s.status==='active' && !s.archived && !seen.has(s.student_no));
+    for(const s of scope){const row={line:0,student_no:s.student_no,prefix:s.prefix,first_name:s.first_name,last_name:s.last_name};
+      items.push(previewRowLine(row,'archive','ไม่มีในไฟล์: นำออกจากรายการแบบ Soft Delete'));
+      ops.push({kind:'archive',id:s.id,version:s.version,student_no:s.student_no,old_club_id:s.club_id});delta(s.club_id,-1);
+    }
+  }
+  const over=[];
+  for(const [clubId,d] of deltas) {
+    if(d<=0)continue;
+    const club=clubs.find(c=>c.id===clubId);
+    if(!club)continue;
+    const before=counts.get(clubId)||0,after=before+d;
+    if(club.capacity!==null && after>Number(club.capacity))over.push({id:clubId,name:club.name,before,after,capacity:Number(club.capacity)});
+  }
+  const override=p.override_capacity===true, reason=cleanString(p.reason,200);
+  if(over.length&&(!override || reason.length<5)){
+    errors.push({line:0,student_no:'',student_name:'',action:'error',detail:`ชุมนุมเกินโควตา: ${over.map(c=>c.name).join(', ')}; ต้องติ๊กอนุญาตและกรอกเหตุผลอย่างน้อย 5 ตัวอักษร`});
+  }
+  if(override&&reason.length<5)errors.push({line:0,action:'error',detail:'เหตุผลกรณีเพิ่มเกินโควตาต้องมีอย่างน้อย 5 ตัวอักษร'});
+  if(mode==='sync' && reason.length<5)errors.push({line:0,action:'error',detail:'โหมดซิงก์ทั้งห้องต้องกรอกเหตุผลอย่างน้อย 5 ตัวอักษร'});
+  const summary={add:items.filter(x=>x.action==='add').length,update:items.filter(x=>x.action==='update').length,
+    unchanged:items.filter(x=>x.action==='unchanged').length,archive:items.filter(x=>x.action==='archive').length,errors:errors.length};
+  const snapshot={room_id:roomId,mode,actor_id:user.id,reason,override,rows,ops,counts:[...counts].sort((a,b)=>String(a[0]).localeCompare(String(b[0]))),
+    clubData:clubs.map(c=>[c.id,c.name,c.capacity,c.active]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))};
+  const preview_hash=await sha256(JSON.stringify(snapshot));
+  return {room,mode,summary,items,errors,over,preview_hash,ops,override,reason,deltas};
+}
+async function importPreview(db,user,request){const p=await body(request);const plan=await importPlan(db,user,p);
+  // Never send internal student UUIDs in the plan response; client sees only relevant preview.
+  return {ok:!plan.errors.length,room:plan.room,mode:plan.mode,summary:plan.summary,items:plan.items,
+    errors:plan.errors,over_capacity:plan.over,preview_hash:plan.preview_hash};
+}
+function checkGuard(db, predicate, bind=[]){return db.prepare(`INSERT INTO excel_import_guard(probe) SELECT CASE WHEN (${predicate}) THEN 1 ELSE 0 END`).bind(...bind);}
+async function importCommit(db,user,request){
+  const p=await body(request),plan=await importPlan(db,user,p);
+  if(plan.errors.length)throw error('ข้อมูลไม่ผ่านการตรวจสอบ กรุณาดูรายการข้อผิดพลาดก่อนบันทึก',409,'IMPORT_INVALID');
+  if(!constantEqual(String(p.preview_hash||''),plan.preview_hash))throw error('ข้อมูลหรือจำนวนสมาชิกเปลี่ยนจากตอนพรีวิว กรุณาตรวจสอบตัวอย่างใหม่',409,'STALE_PREVIEW');
+  if(plan.mode==='sync' && p.confirm_sync!==plan.room.id)throw error('โหมดซิงก์ต้องยืนยันรหัสห้องให้ถูกต้อง',400,'CONFIRM_REQUIRED');
+  if(plan.mode==='sync' && plan.summary.archive>0 && !p.acknowledge_archives)throw error('กรุณายืนยันการนำรายชื่อที่ไม่อยู่ในไฟล์ออกก่อน',400);
+  const now=sqlNow(),runId=id(), statements=[];
+  const reason=plan.reason||'';
+  for(const op of plan.ops){
+    if(op.kind==='add'){
+      const sId=id(),r=op.row;
+      statements.push(db.prepare(`INSERT INTO students(id,student_no,prefix,first_name,last_name,room_id,club_id,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?)`).bind(sId,r.student_no,r.prefix,r.first_name,r.last_name,plan.room.id,op.club_id,now,now));
+      if(op.club_id)statements.push(db.prepare('INSERT INTO membership_history(student_id,old_club_id,new_club_id,actor_id,reason,at) VALUES(?,?,?,?,?,?)')
+        .bind(sId,null,op.club_id,user.id,'นำเข้า Excel',now));
+      statements.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+        .bind(user.id,'import_create','student',sId,JSON.stringify({student_no:r.student_no,room_id:plan.room.id,run_id:runId}),now));
+    }else if(op.kind==='update'){
+      const r=op.row;
+      statements.push(checkGuard(db,`EXISTS (SELECT 1 FROM students WHERE id=? AND version=? AND room_id=? AND status='active'
+        AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=students.id))`,[op.id,op.version,plan.room.id]));
+      statements.push(db.prepare('UPDATE students SET prefix=?,first_name=?,last_name=?,club_id=?,version=version+1,updated_at=? WHERE id=? AND version=?')
+        .bind(r.prefix,r.first_name,r.last_name,op.club_id,now,op.id,op.version));
+      if(op.old_club_id!==op.club_id)statements.push(db.prepare('INSERT INTO membership_history(student_id,old_club_id,new_club_id,actor_id,reason,at) VALUES(?,?,?,?,?,?)')
+        .bind(op.id,op.old_club_id,op.club_id,user.id,reason||'นำเข้า Excel เปลี่ยนชุมนุม',now));
+      statements.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+        .bind(user.id,'import_update','student',op.id,JSON.stringify({student_no:r.student_no,run_id:runId}),now));
+    }else if(op.kind==='archive'){
+      statements.push(checkGuard(db,`EXISTS (SELECT 1 FROM students WHERE id=? AND version=? AND room_id=? AND status='active'
+        AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=students.id))`,[op.id,op.version,plan.room.id]));
+      statements.push(db.prepare('UPDATE students SET version=version+1,updated_at=? WHERE id=? AND version=?').bind(now,op.id,op.version));
+      statements.push(db.prepare('INSERT INTO student_archives(student_id,archived_at,archived_by,reason) VALUES(?,?,?,?)')
+        .bind(op.id,now,user.id,`ซิงก์ Excel: ${reason}`));
+      statements.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+        .bind(user.id,'import_archive','student',op.id,JSON.stringify({student_no:op.student_no,run_id:runId}),now));
+    }
+  }
+  if(!plan.override)for(const [clubId,delta] of plan.deltas){if(delta<=0)continue;
+    statements.push(checkGuard(db,`(SELECT capacity FROM clubs WHERE id=?) IS NULL OR
+       (SELECT COUNT(*) FROM students s WHERE s.club_id=? AND s.status='active'
+        AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)) <= (SELECT capacity FROM clubs WHERE id=?)`,
+      [clubId,clubId,clubId]));
+  }
+  statements.push(db.prepare(`INSERT INTO excel_import_runs(id,actor_id,room_id,mode,preview_hash,added,updated,archived,unchanged,override_capacity,reason,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).bind(runId,user.id,plan.room.id,plan.mode,plan.preview_hash,plan.summary.add,plan.summary.update,plan.summary.archive,plan.summary.unchanged,plan.override?1:0,reason,now));
+  statements.push(db.prepare('DELETE FROM excel_import_guard'));
+  try{await db.batch(statements);}catch(e){
+    if(/CHECK constraint failed: (?:excel_import_guard|probe)/i.test(String(e)))throw error('ข้อมูลมีผู้แก้ไขระหว่างนำเข้าหรือจำนวนสมาชิกเกินโควตา กรุณาพรีวิวใหม่',409,'STALE_OR_FULL');
+    if(/UNIQUE constraint failed: students.student_no/i.test(String(e)))throw error('มีเลขประจำตัวซ้ำในฐานข้อมูล กรุณาพรีวิวใหม่',409,'DUPLICATE');
+    throw e;
+  }
+  return {ok:true,run_id:runId,room:plan.room,summary:plan.summary,at:now};
+}
+async function importHistory(db,user){access(user,'super_admin','admin');
+  const result=await db.prepare(`SELECT i.id,i.room_id,i.mode,i.added,i.updated,i.archived,i.unchanged,i.reason,i.created_at,
+    u.display_name AS actor FROM excel_import_runs i JOIN users u ON u.id=i.actor_id ORDER BY i.created_at DESC LIMIT 30`).all();
+  return {items:result.results};
+}
+
 export async function onRequest({request,env}) {
   const url=new URL(request.url), route=url.pathname.replace(/^\/api\/?/,'').replace(/\/+$/,'');
   try {
@@ -405,7 +561,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.2.0'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.3.0'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -424,6 +580,9 @@ export async function onRequest({request,env}) {
       ]);
       return json({ok:true,login_again:true},200,{'Set-Cookie':cookie('',0)});
     }
+    if(route==='import/preview') {requireMethod(request.method,'POST');return json(await importPreview(db,user,request));}
+    if(route==='import/commit') {requireMethod(request.method,'POST');return json(await importCommit(db,user,request));}
+    if(route==='import/history') {requireMethod(request.method,'GET');return json(await importHistory(db,user));}
     if(route==='dashboard') {requireMethod(request.method,'GET');return json(await getDashboard(db,user));}
     if(route==='rooms') {requireMethod(request.method,'GET');return json({items:await listRooms(db,user)});}
     if(route==='clubs' && request.method==='GET')return json({items:await listClubs(db,user)});
