@@ -7,6 +7,7 @@ const sqlite=new DatabaseSync(':memory:');
 sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0002_student_archives.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0003_excel_import.sql',import.meta.url),'utf8'));
+sqlite.exec(readFileSync(new URL('../migrations/0004_teacher_excel_permissions.sql',import.meta.url),'utf8'));
 const db={
  prepare(sql){let stmt=sqlite.prepare(sql), args=[];
    const wrap={bind(...v){args=v;return wrap;},first(){return stmt.get(...args)??null;},all(){return {results:stmt.all(...args)};},run(){return {meta:{changes:stmt.run(...args).changes}};}};
@@ -165,4 +166,50 @@ test('v1.3 stale preview and club quota override are enforced on server',async()
   const found=await call('students?room_id=2569-3-1','GET',null,session);
   assert.equal(found.data.items.length,1);
   assert.equal(found.data.items[0].club_id,importClub);
+});
+
+test('v1.4 teacher Excel permissions: default deny, room scope, sync and override restrictions, scoped history, revocation',async()=>{
+  let r=await call('users','POST',{username:'teacher2',display_name:'ครูสิทธิ์ Excel',role:'teacher',password:'teacher-secret-2026'},session);
+  assert.equal(r.status,201);const tId=r.data.id;
+  r=await call('auth/login','POST',{username:'teacher2',password:'teacher-secret-2026'});
+  assert.equal(r.status,200);const tCookie=r.cookie.split(';')[0];
+  const row=(no,name)=>({student_no:no,prefix:'นางสาว',first_name:name,last_name:'ทดสอบ',club_name:''});
+  const payload={room_id:'2569-4-1',mode:'merge',rows:[row('T-401','คนหนึ่ง'),row('T-402','คนสอง')]};
+  r=await call('auth/me','GET',null,tCookie);assert.equal(r.data.user.can_import_excel,0);
+  r=await call('import/preview','POST',payload,tCookie);assert.equal(r.status,403);
+  r=await call('import/history','GET',null,tCookie);assert.equal(r.status,403);
+  r=await call('assignments','POST',{user_id:tId,room_ids:['2569-4-1'],club_ids:[],can_import_excel:true,can_sync_excel:true},tCookie);
+  assert.equal(r.status,403,'teachers cannot self-grant');
+  r=await call('assignments','POST',{user_id:tId,room_ids:['2569-4-1'],club_ids:[],can_import_excel:false,can_sync_excel:true},session);
+  assert.equal(r.status,400,'sync implies import');
+  r=await call('assignments','POST',{user_id:tId,room_ids:['2569-4-1'],club_ids:[],can_import_excel:true,can_sync_excel:false},session);
+  assert.equal(r.status,200);
+  r=await call('auth/me','GET',null,tCookie);assert.equal(r.data.user.can_import_excel,1);assert.equal(r.data.user.can_sync_excel,0);
+  r=await call('rooms','GET',null,tCookie);assert.deepEqual(r.data.items.map(x=>x.id),['2569-4-1']);
+  r=await call('import/preview','POST',{...payload,room_id:'2569-2-1'},tCookie);assert.equal(r.status,403);
+  r=await call('import/commit','POST',{...payload,room_id:'2569-2-1',preview_hash:'invalid'},tCookie);assert.equal(r.status,403);
+  r=await call('import/preview','POST',{...payload,mode:'sync',reason:'ซิงก์ข้อมูลนักเรียน'},tCookie);assert.equal(r.status,403);
+  r=await call('import/preview','POST',{...payload,override_capacity:true,reason:'ขอเพิ่มเกินโควตา'},tCookie);assert.equal(r.status,403);
+  r=await call('import/preview','POST',payload,tCookie);assert.equal(r.status,200);assert.equal(r.data.summary.add,2);
+  let committed=await call('import/commit','POST',{...payload,preview_hash:r.data.preview_hash},tCookie);
+  assert.equal(committed.status,200,JSON.stringify(committed.data));
+  r=await call('import/history','GET',null,tCookie);assert.ok(r.data.items.length===1);assert.equal(r.data.items[0].actor,'ครูสิทธิ์ Excel');
+  r=await call('students?room_id=2569-4-1','GET',null,session);assert.equal(r.data.items.length,2);
+  // Admin gives explicit permission to use the destructive sync workflow.
+  r=await call('assignments','POST',{user_id:tId,room_ids:['2569-4-1'],club_ids:[],can_import_excel:true,can_sync_excel:true},session);assert.equal(r.status,200);
+  const sync={room_id:'2569-4-1',mode:'sync',rows:[row('T-401','คนหนึ่ง')],reason:'รายชื่อนักเรียนปรับใหม่'};
+  r=await call('import/preview','POST',sync,tCookie);assert.equal(r.status,200);assert.equal(r.data.summary.archive,1);
+  committed=await call('import/commit','POST',{...sync,preview_hash:r.data.preview_hash,confirm_sync:'2569-4-1',acknowledge_archives:true},tCookie);
+  assert.equal(committed.status,200,JSON.stringify(committed.data));
+  r=await call('students?room_id=2569-4-1','GET',null,session);assert.equal(r.data.items.length,1);
+  r=await call('import/history','GET',null,tCookie);assert.equal(r.data.items.length,2);
+  // Creating a preview is not sufficient authorization if admin revokes access before commit.
+  const pending={room_id:'2569-4-1',mode:'merge',rows:[row('T-403','คนสาม')]};
+  r=await call('import/preview','POST',pending,tCookie);assert.equal(r.status,200);
+  const staleHash=r.data.preview_hash;
+  r=await call('assignments','POST',{user_id:tId,room_ids:['2569-4-1'],club_ids:[],can_import_excel:false,can_sync_excel:false},session);assert.equal(r.status,200);
+  r=await call('import/commit','POST',{...pending,preview_hash:staleHash},tCookie);assert.equal(r.status,403);
+  r=await call('auth/me','GET',null,tCookie);assert.equal(r.data.user.can_import_excel,0);
+  r=await call('students?room_id=2569-4-1','GET',null,session);assert.ok(!r.data.items.some(x=>x.student_no==='T-403'));
+  r=await call('import/history','GET',null,tCookie);assert.equal(r.status,403);
 });

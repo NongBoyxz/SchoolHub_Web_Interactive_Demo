@@ -39,3 +39,8 @@
 .import-error-row{background:#fff9ee}.import-highlight{outline:3px solid #f4aa3b;outline-offset:-3px}
 .data-table tr[hidden]{display:none}
 @media(max-width:800px){.import-errors{padding:13px}.import-issue-head{align-items:flex-start;gap:6px}.import-issue-link{margin-left:0}}
+
+/* v1.4 teacher Excel permissions */
+.import-permission-card{padding:14px;background:#f8fbff;border:1px solid #d8e5f5;gap:10px}
+.import-permission-card .checkbox-inline{display:flex;align-items:center;gap:9px}
+.import-permission-card .checkbox-inline input{width:18px;height:18px;flex:0 0 auto}

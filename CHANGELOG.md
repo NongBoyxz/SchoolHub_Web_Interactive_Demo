@@ -1,20 +1,27 @@
-# SchoolHub Cloudflare v1.1
+# SchoolHub Changelog
 
-## เพิ่มใหม่
-- Cloudflare Pages app ที่ `/app/` พร้อม UI Responsive
-- Cloudflare Pages Function API + D1 schema และ 33 ห้องโครงสร้างปี 2569
-- Initial Super Admin Setup ป้องกันคนที่ไม่ทราบ Secret
-- Session cookie Secure + HttpOnly, role checks ฝั่ง API, PBKDF2 password hashing, rate-limited login
-- เพิ่ม/แก้ข้อมูลนักเรียน, ตรวจเลขประจำตัวซ้ำ, version checks และ audit log
-- จัดการชื่อชุมนุม/ความจุ, ย้ายสมาชิก, ประวัติย้าย และ Admin override เมื่อเต็ม
-- ผู้ดูแลสร้างบัญชีครูและกำหนดความรับผิดชอบ
-- CSV export เฉพาะข้อมูลที่มีสิทธิ์
+## v1.4.0 — Teacher Excel import permissions
 
-## ยังไม่รองรับ
-- นำเข้า XLSX, ซิงก์ Excel เต็ม, Google OAuth, Self-signup, Recovery Codes
-- ปีการศึกษาใหม่, เช็กชื่อ/ประเมินผล, เทมเพลตรายงาน/PDF, สำรองกู้คืนและอีเมล
+- เพิ่มสิทธิ์ `can_import_excel` และ `can_sync_excel` รายบัญชีครู (Migration `0004_teacher_excel_permissions.sql` ต้องรันครั้งเดียว)
+- ผู้ดูแลแก้สิทธิ์ในเมนู **บัญชีและสิทธิ์ → กำหนดหน้าที่และสิทธิ์** พร้อมมอบหมายห้องเรียน
+- ครูที่ได้สิทธิ์นำเข้าได้เฉพาะ **ห้องประจำชั้น** ที่ได้รับมอบหมาย (ไม่ใช่ทุกห้องที่นักเรียนในชุมนุมกระจายอยู่)
+- ซิงก์ทั้งห้องต้องได้รับอนุญาตแยกต่างหาก; ครูไม่สามารถ Override โควตาชุมนุม
+- ตรวจสิทธิ์ซ้ำฝั่งเซิร์ฟเวอร์ทั้งตอน Preview และ Commit; ครูเห็นประวัติการนำเข้าของตนเท่านั้น
+- คงฟังก์ชันนำเข้า XLSX/CSV และรายละเอียดข้อผิดพลาดจาก v1.3.1
+- ชุดทดสอบ API 10 กรณี (รวมกรณีจำกัดสิทธิ์ครู)
 
-## เป้าหมายการ Deploy
-- เก็บ root `index.html` ปัจจุบันไว้ (Demo ไม่หาย)
-- เปลี่ยน Build command เป็น `node scripts/build.mjs`, Output directory `public`
-- เก็บข้อมูลจริงไว้ใน D1 เท่านั้น
+**ยังไม่รวม:** นำเข้าสมาชิกชุมนุมโดยครูที่ปรึกษา, Google Login, บัญชีสมัครเองรออนุมัติ, แปลงไฟล์ Excel โรงเรียนเดิมอัตโนมัติ
+
+## v1.3.1 — Excel import error details
+
+- ข้อผิดพลาดพรีวิวแสดงแถว, เลขประจำตัว, ชื่อผู้เรียน, สาเหตุ
+- กรองเฉพาะแถวผิดและดาวน์โหลด CSV รายการผิดพลาด
+
+## v1.3.0 — Excel preview / commit
+
+- นำเข้า XLSX/CSV ตามแบบฟอร์ม SchoolHub แบบเพิ่ม/อัปเดตหรือซิงก์ทั้งห้อง
+- ตรวจซ้ำและป้องกันการ Commit จากพรีวิวเก่า
+
+## v1.2.0 — Soft Delete & school branding
+
+- นำนักเรียนออกจากรายการและกู้คืน; ชื่อและตราโรงเรียนเทพศาลาประชาสรรค์

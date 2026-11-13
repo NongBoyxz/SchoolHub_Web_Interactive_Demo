@@ -8,6 +8,7 @@ const sqlite=new DatabaseSync(':memory:');
 sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0002_student_archives.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0003_excel_import.sql',import.meta.url),'utf8'));
+sqlite.exec(readFileSync(new URL('../migrations/0004_teacher_excel_permissions.sql',import.meta.url),'utf8'));
 const db={
  prepare(q){const s=sqlite.prepare(q), m={sql:q,args:[],bind(...x){m.args=x;return m},async first(){return s.get(...m.args)||null},async all(){return {results:s.all(...m.args)}},async run(){return {meta:{changes:s.run(...m.args).changes}}}};return m;},
  async batch(stmts){sqlite.exec('BEGIN');try{const result=[];for(const s of stmts)result.push(/^\s*SELECT/i.test(s.sql)?await s.all():await s.run());sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}

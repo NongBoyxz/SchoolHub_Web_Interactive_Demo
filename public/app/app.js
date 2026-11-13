@@ -1,9 +1,11 @@
 import {readSchoolImport} from './xlsx-reader.js';
-// SchoolHub Live v1.3 — authenticated UI; no real names/data shipped in this file.
+// SchoolHub Live v1.4 — role-scoped teacher Excel import; no student data in static assets.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
 const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,audit:[],archived:[],importHistory:[],importDraft:null,page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const allAdmin=()=>['super_admin','admin'].includes(state.user?.role);
+const canUseImport=()=>allAdmin()||(state.user?.role==='teacher'&&Number(state.user.can_import_excel)===1);
+const canUseSync=()=>allAdmin()||(state.user?.role==='teacher'&&Number(state.user.can_import_excel)===1&&Number(state.user.can_sync_excel)===1);
 const currentRole=()=>({super_admin:'Super Admin',admin:'Admin',teacher:'Teacher'}[state.user?.role]||'');
 const schoolName='โรงเรียนเทพศาลาประชาสรรค์';
 const brandMark=(extra='')=>`<img class="school-mark ${extra}" src="/assets/school-logo.png" alt="ตราโรงเรียนเทพศาลาประชาสรรค์"/>`;
@@ -65,12 +67,12 @@ function passwordDialog(){
 }
 function navItem(key,emoji,label){return `<button class="nav-btn ${state.tab===key?'active':''}" data-tab="${key}"><span class="emoji">${emoji}</span>${esc(label)}</button>`;}
 function shell(content){
- const nav=[['dashboard','▦','ภาพรวม'],...(allAdmin()?[['import','📥','นำเข้า Excel']]:[]),['students','👥','นักเรียน'],...(allAdmin()?[['archived','🗂️','รายการนักเรียนที่นำออก']]:[]),['clubs','🎯','ชุมนุม'],['rooms','🏫','ห้องเรียน'],['export','📥','ส่งออกรายงาน'],...(allAdmin()?[['users','🔐','บัญชีและสิทธิ์'],['audit','🕘','ประวัติการแก้ไข']]:[])];
- root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.3</small></span></div></div>
+ const nav=[['dashboard','▦','ภาพรวม'],...(canUseImport()?[['import','📥','นำเข้า Excel']]:[]),['students','👥','นักเรียน'],...(allAdmin()?[['archived','🗂️','รายการนักเรียนที่นำออก']]:[]),['clubs','🎯','ชุมนุม'],['rooms','🏫','ห้องเรียน'],['export','📥','ส่งออกรายงาน'],...(allAdmin()?[['users','🔐','บัญชีและสิทธิ์'],['audit','🕘','ประวัติการแก้ไข']]:[])];
+ root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.4</small></span></div></div>
  <nav class="nav">${nav.map(([key,emoji,label])=>navItem(key,emoji,label)).join('')}</nav>
  <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button><p class="mini" style="color:#a4c0df;margin-top:18px">เว็บจำลองเดิม <a style="color:white" href="/">เปิดที่นี่</a></p></div></aside>
  <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
- <main class="page">${content}<p class="footer-note">SchoolHub Cloudflare v1.3 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
+ <main class="page">${content}<p class="footer-note">SchoolHub Cloudflare v1.4 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
  root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;loadTab();});
  root.querySelector('#change-password').onclick=()=>passwordDialog();
  root.querySelector('#logout').onclick=async()=>{try{await post('auth/logout',{});}catch{}state.user=null;renderLogin();};
@@ -203,18 +205,18 @@ function renderRooms(){const rows=state.rooms.map(r=>`<tr><td>ม.${r.grade}/${r
 function renderExport(){shell(`${title('ส่งออกรายงาน','ข้อมูลจริงจากฐานข้อมูล Cloudflare D1')}
  <div class="split"><div class="card stack"><h3>ดาวน์โหลดรายชื่อนักเรียน</h3><p class="sub">เปิดได้ด้วย Microsoft Excel โดยเลือกเข้ารหัส UTF-8 และมีการป้องกันสูตรอันตรายในเซลล์</p>
  <div class="actions"><button class="btn primary" id="export-csv">📥 ดาวน์โหลด CSV</button></div><div class="hint">ครูทั่วไปจะดาวน์โหลดได้เฉพาะนักเรียนในห้องหรือชุมนุมที่ได้รับมอบหมาย ผู้ดูแลระบบดาวน์โหลดได้ทั้งโรงเรียน</div></div>
- <div class="card stack"><h3>นำเข้า Excel / XLSX</h3><span class="tag">รองรับ .xlsx / .csv</span><p class="sub">ใช้แบบฟอร์ม SchoolHub แล้วตรวจข้อมูลรายห้องก่อนบันทึกใน D1</p>${allAdmin()?'<button class="btn primary" id="go-import">เปิดระบบนำเข้า →</button>':'<p class="sub">การนำเข้ารุ่นนี้จำกัดเฉพาะ Admin/Super Admin</p>'}</div></div>`);
- if(allAdmin())root.querySelector('#go-import').onclick=()=>{state.tab='import';loadTab();};
+ <div class="card stack"><h3>นำเข้า Excel / XLSX</h3><span class="tag">รองรับ .xlsx / .csv</span><p class="sub">ใช้แบบฟอร์ม SchoolHub แล้วตรวจข้อมูลรายห้องก่อนบันทึกใน D1</p>${canUseImport()?'<button class="btn primary" id="go-import">เปิดระบบนำเข้า →</button>':'<p class="sub">ต้องได้รับสิทธิ์นำเข้า Excel จากผู้ดูแลระบบก่อน</p>'}</div></div>`);
+ if(canUseImport())root.querySelector('#go-import').onclick=()=>{state.tab='import';loadTab();};
  root.querySelector('#export-csv').onclick=async()=>{
   try{const r=await fetch('/api/export/students',{credentials:'same-origin'});if(!r.ok){throw new Error((await r.json()).error||'ดาวน์โหลดไม่สำเร็จ');}
     const blob=await r.blob(),obj=URL.createObjectURL(blob),a=document.createElement('a');a.href=obj;a.download='schoolhub-students.csv';a.click();URL.revokeObjectURL(obj);notify('ส่งออกรายชื่อเรียบร้อย');}
   catch(err){notify(err.message);}
  };
 }
-function renderUsers(){const rows=state.users.map(u=>`<tr><td><strong>${esc(u.display_name)}</strong><div class="sub">${esc(u.username)}</div></td><td>${esc(u.role)}</td><td>${u.active?'ใช้งาน':'ระงับ'}</td><td>${u.role==='teacher'?`${state.teacher_rooms.filter(x=>x.user_id===u.id).length} ห้อง / ${state.teacher_clubs.filter(x=>x.user_id===u.id).length} ชุมนุม`:'—'}</td><td>${u.role==='teacher'?`<button class="btn small" data-assign="${esc(u.id)}">กำหนดหน้าที่</button>`:'—'}</td></tr>`).join('');
+function renderUsers(){const rows=state.users.map(u=>`<tr><td><strong>${esc(u.display_name)}</strong><div class="sub">${esc(u.username)}</div></td><td>${esc(u.role)}</td><td>${u.active?'ใช้งาน':'ระงับ'}</td><td>${u.role==='teacher'?`${state.teacher_rooms.filter(x=>x.user_id===u.id).length} ห้อง / ${state.teacher_clubs.filter(x=>x.user_id===u.id).length} ชุมนุม`:'—'}</td><td>${u.role==='teacher'?`${u.can_import_excel?'✅ นำเข้า Excel':'⛔ ไม่อนุญาต'}${u.can_sync_excel?' • ✅ ซิงก์':''}`:'—'}</td><td>${u.role==='teacher'?`<button class="btn small" data-assign="${esc(u.id)}">กำหนดหน้าที่และสิทธิ์</button>`:'—'}</td></tr>`).join('');
  shell(`${title('บัญชีและสิทธิ์','สร้างบัญชีครูและกำหนดห้องเรียน/ชุมนุมโดยผู้ดูแล',`<button class="btn primary" id="add-user">+ สร้างบัญชี</button>`)}
  <div class="warning-box" style="margin-bottom:15px">การสมัครด้วยตนเองและ Google Login ยังไม่รวมในเวอร์ชันนี้ • ตั้งรหัสผ่านชั่วคราวให้ครูเป็นรายบุคคลและส่งผ่านช่องทางส่วนตัว</div>
- ${table(['ชื่อผู้ใช้','บทบาท','สถานะ','หน้าที่','จัดการ'],rows)}`);
+ ${table(['ชื่อผู้ใช้','บทบาท','สถานะ','หน้าที่','สิทธิ์ Excel','จัดการ'],rows)}`);
  root.querySelector('#add-user').onclick=()=>userDialog();
  root.querySelectorAll('[data-assign]').forEach(b=>b.onclick=()=>assignDialog(state.users.find(u=>u.id===b.dataset.assign)));
 }
@@ -226,15 +228,26 @@ function userDialog(){const roleItems=[{id:'teacher',label:'ครู'},...(stat
 }
 function assignDialog(user){const ur=state.teacher_rooms.filter(x=>x.user_id===user.id).map(x=>x.room_id), uc=state.teacher_clubs.filter(x=>x.user_id===user.id).map(x=>x.club_id);
  const fields=`<p class="sub">${esc(user.display_name)}</p><strong>ห้องเรียนที่รับผิดชอบ</strong><div class="check-col">${state.rooms.map(r=>`<label><input name="room_ids" value="${esc(r.id)}" type="checkbox" ${ur.includes(r.id)?'checked':''}> ม.${r.grade}/${r.room_no}</label>`).join('')}</div>
- ${htmlField('club_id','ชุมนุมที่รับผิดชอบ (1 ชุมนุม)',uc[0]||'',{type:'select',items:[{id:'',label:'ยังไม่มอบหมาย'},...state.clubs.filter(c=>c.active).map(c=>({id:c.id,label:c.name}))],required:false})}`;
- showModal('กำหนดหน้าที่ครู',fields,async(p,form)=>post('assignments',{user_id:user.id,room_ids:[...form.querySelectorAll('input[name=room_ids]:checked')].map(el=>el.value),club_ids:p.club_id?[p.club_id]:[]}));
+ ${htmlField('club_id','ชุมนุมที่รับผิดชอบ (1 ชุมนุม)',uc[0]||'',{type:'select',items:[{id:'',label:'ยังไม่มอบหมาย'},...state.clubs.filter(c=>c.active).map(c=>({id:c.id,label:c.name}))],required:false})}
+ <div class="card import-permission-card stack"><strong>🔐 สิทธิ์นำเข้า Excel สำหรับครูคนนี้</strong>
+  <label class="checkbox-inline"><input name="can_import_excel" type="checkbox" ${user.can_import_excel?'checked':''}/> อนุญาตให้นำเข้า Excel (เฉพาะห้องที่มอบหมาย)</label>
+  <label class="checkbox-inline"><input name="can_sync_excel" type="checkbox" ${user.can_sync_excel?'checked':''}/> อนุญาตซิงก์ทั้งห้อง (Soft Delete ผู้ที่ไม่อยู่ในไฟล์)</label>
+  <p class="reason-help">การซิงก์ทั้งห้องมีความเสี่ยงสูง ควรให้สิทธิ์เฉพาะครูที่รับผิดชอบการปรับปรุงทะเบียน</p>
+ </div>`;
+ showModal('กำหนดหน้าที่และสิทธิ์ครู',fields,async(p,form)=>post('assignments',{
+   user_id:user.id,room_ids:[...form.querySelectorAll('input[name=room_ids]:checked')].map(el=>el.value),
+   club_ids:p.club_id?[p.club_id]:[],
+   can_import_excel:!!form.querySelector('[name=can_import_excel]:checked'),
+   can_sync_excel:!!form.querySelector('[name=can_sync_excel]:checked')
+ }));
 }
 function renderAudit(){const rows=state.audit.map(x=>`<tr><td>${esc(new Date(x.at).toLocaleString('th-TH'))}</td><td>${esc(x.actor)}</td><td>${esc(x.action)}</td><td>${esc(x.entity_type)}</td><td title="${esc(x.entity_id)}">${esc(x.entity_id.slice(0,14))}</td></tr>`).join('');
  shell(`${title('ประวัติการแก้ไข','100 รายการล่าสุดจากฐานข้อมูล — ดูได้เฉพาะผู้ดูแล')}${table(['วันเวลา','ผู้ดำเนินการ','การดำเนินการ','ประเภท','รหัสรายการ'],rows)}`);
 }
-// SchoolHub v1.3 admin-only XLSX/CSV import UI. No workbook contents are published in GitHub.
+// SchoolHub v1.4 permission-gated XLSX/CSV import UI. File contents never enter GitHub.
 function renderImport(){
- if(!allAdmin()){state.tab='dashboard';return renderDashboard();}
+ if(!canUseImport()){state.tab='dashboard';return renderDashboard();}
+ if(state.rooms.length===0){shell(`${title('นำเข้า Excel','ยังไม่มีห้องเรียนที่สามารถนำเข้าได้')}<div class="card stack"><h3>ยังไม่ได้รับมอบหมายห้องเรียน</h3><p class="sub">ผู้ดูแลระบบต้องมอบหมายห้องเรียนให้บัญชีของคุณก่อน จึงจะนำเข้า Excel ได้</p></div>`);return;}
  const previous=(state.importHistory||[]).map(run=>`<tr><td>${esc(new Date(run.created_at).toLocaleString('th-TH'))}</td><td>${esc(roomName(run.room_id))}</td><td>${run.mode==='sync'?'ซิงก์ทั้งห้อง':'เพิ่ม/อัปเดต'}</td><td>${run.added}/${run.updated}/${run.archived}</td><td>${esc(run.actor)}</td></tr>`).join('');
  shell(`${title('นำเข้า Excel','เลือกห้องเรียนและตรวจสอบทุกการเปลี่ยนแปลงก่อนบันทึกลง D1')}
  <section class="card stack import-panel">
@@ -244,11 +257,11 @@ function renderImport(){
  <div class="grid2">
   <label class="field"><span>ห้องเรียนปลายทาง</span><select id="import-room" required>${state.rooms.map(r=>`<option value="${esc(r.id)}">ม.${r.grade}/${r.room_no} • ปี ${r.year}</option>`).join('')}</select></label>
   <label class="field"><span>ไฟล์ Excel/CSV</span><input type="file" id="import-file" accept=".xlsx,.csv" required/></label>
-  <label class="field"><span>วิธีนำเข้า</span><select id="import-mode"><option value="merge">เพิ่ม/อัปเดตเท่านั้น (ไม่ลบคนที่ไม่อยู่ในไฟล์)</option><option value="sync">ซิงก์ทั้งห้อง (นำคนที่ไม่มีในไฟล์ออกแบบ Soft Delete)</option></select></label>
+  <label class="field"><span>วิธีนำเข้า</span><select id="import-mode"><option value="merge">เพิ่ม/อัปเดตเท่านั้น (ไม่ลบคนที่ไม่อยู่ในไฟล์)</option>${canUseSync()?'<option value="sync">ซิงก์ทั้งห้อง (นำคนที่ไม่มีในไฟล์ออกแบบ Soft Delete)</option>':''}</select></label>
   <label class="field"><span>เหตุผล (จำเป็นเมื่อซิงก์หรืออนุญาตเกินโควตา)</span><input id="import-reason" maxlength="200" placeholder="กรุณากรอกอย่างน้อย 5 ตัวอักษร"/></label>
  </div>
- <label class="checkbox-inline"><input id="import-override" type="checkbox"/> Super Admin/Admin: อนุญาตเพิ่มเกินโควตาเมื่อมีเหตุผล</label>
- <p class="reason-help">กรณีเลือกอนุญาตเพิ่มเกินโควตา หรือซิงก์ทั้งห้อง ต้องกรอกเหตุผลอย่างน้อย 5 ตัวอักษร</p>
+ ${allAdmin()?'<label class="checkbox-inline"><input id="import-override" type="checkbox"/> Super Admin/Admin: อนุญาตเพิ่มเกินโควตาเมื่อมีเหตุผล</label>':'<div class="hint">ครูไม่สามารถเพิ่มสมาชิกเกินโควตาได้ หากชุมนุมเต็ม ให้ประสานผู้ดูแลระบบ</div>'}
+ <p class="reason-help">กรณีซิงก์ทั้งห้อง${allAdmin()?'หรืออนุญาตเกินโควตา':''} ต้องกรอกเหตุผลอย่างน้อย 5 ตัวอักษร</p>
  <div class="actions"><button id="import-preview" class="btn primary">🔎 ตรวจสอบข้อมูลก่อนนำเข้า</button><button id="import-reset" class="btn">ล้างพรีวิว</button></div>
  <div id="import-feedback" class="mini" role="status" aria-live="polite"></div>
  </section>
@@ -256,7 +269,7 @@ function renderImport(){
  <section class="card section stack"><h3>ประวัติการนำเข้าสำเร็จ (30 รายการล่าสุด)</h3>
  <div class="table-wrap"><table class="data-table"><thead><tr><th>วันที่</th><th>ห้อง</th><th>โหมด</th><th>เพิ่ม / แก้ / นำออก</th><th>ผู้ดำเนินการ</th></tr></thead><tbody>${previous||'<tr><td colspan="5" class="empty">ยังไม่มีการนำเข้า</td></tr>'}</tbody></table></div></section>`);
  const $=id=>root.querySelector('#'+id),clear=()=>{$('import-result').hidden=true;$('import-result').innerHTML='';state.importDraft=null;};
- ['import-file','import-room','import-mode','import-reason','import-override'].forEach(id=>$(id).addEventListener('change',clear));
+ ['import-file','import-room','import-mode','import-reason','import-override'].forEach(id=>$(id)?.addEventListener('change',clear));
  $('import-reset').onclick=()=>{clear();$('import-file').value='';$('import-feedback').textContent='ล้างข้อมูลพรีวิวแล้ว';};
  $('import-preview').onclick=async()=>{
   const button=$('import-preview'),file=$('import-file').files[0];clear();
@@ -265,7 +278,7 @@ function renderImport(){
   try{
    const rows=await readSchoolImport(file);
    const payload={rows,room_id:$('import-room').value,mode:$('import-mode').value,
-     reason:$('import-reason').value.trim(),override_capacity:$('import-override').checked};
+     reason:$('import-reason').value.trim(),override_capacity:!!$('import-override')?.checked};
    const result=await post('import/preview',payload);
    state.importDraft={payload,preview_hash:result.preview_hash};
    renderImportPreview(result);
@@ -374,7 +387,7 @@ async function loadTab(reload=false){if(!state.user)return;
    switch(state.tab){
     case 'dashboard':state.dashboard=await api('dashboard');renderDashboard();break;
     case 'archived':{if(!allAdmin()){state.tab='dashboard';return loadTab();}const params=new URLSearchParams({page:String(state.page),q:state.query});state.archived=(await api('students/archived?'+params)).items;renderArchived();break;}
-    case 'import':{if(!allAdmin()){state.tab='dashboard';return loadTab();}state.importHistory=(await api('import/history')).items;renderImport();break;}
+    case 'import':{if(!canUseImport()){state.tab='dashboard';return loadTab();}state.importHistory=(await api('import/history')).items;renderImport();break;}
     case 'students':{const params=new URLSearchParams({page:String(state.page),q:state.query,room_id:state.roomFilter,club_id:state.clubFilter});state.students=(await api('students?'+params)).items;renderStudents();break;}
     case 'clubs':renderClubs();break;
     case 'rooms':renderRooms();break;

@@ -47,13 +47,15 @@ async function body(request) {
 function requireMethod(method, expected) { if(method!==expected) throw error('Method not allowed',405); }
 function access(user, ...roles) { if(!user || !roles.includes(user.role)) throw error('ไม่มีสิทธิ์ดำเนินการ',403,'FORBIDDEN'); }
 function isAdmin(user) { return user.role==='super_admin'||user.role==='admin'; }
+function canImportExcel(user) { return isAdmin(user) || (user.role==='teacher' && user.can_import_excel===1); }
+function canSyncExcel(user) { return isAdmin(user) || (user.role==='teacher' && user.can_import_excel===1 && user.can_sync_excel===1); }
 function cookieToken(request) { const m=/(?:^|;\s*)sh_session=([a-f0-9]{64})(?:;|$)/.exec(request.headers.get('cookie')||''); return m?.[1]||null; }
 const cookie = (v, seconds=SESSION_SECONDS) => `sh_session=${v}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${seconds}`;
 async function who(db, request) {
   const token = cookieToken(request);
   if(!token) return null;
   const hashed=await sha256(token);
-  return await db.prepare(`SELECT u.id,u.username,u.display_name,u.role,u.active
+  return await db.prepare(`SELECT u.id,u.username,u.display_name,u.role,u.active,u.can_import_excel,u.can_sync_excel
     FROM sessions s JOIN users u ON s.user_id=u.id
     WHERE s.token_hash=? AND s.expires_at>? AND u.active=1`).bind(hashed,sqlNow()).first();
 }
@@ -100,7 +102,7 @@ async function login(db, request) {
   const token=randomHex(32), expiry=new Date(Date.now()+SESSION_SECONDS*1000).toISOString();
   await db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)')
     .bind(await sha256(token),u.id,expiry,sqlNow()).run();
-  return json({ok:true,user:{id:u.id,username:u.username,display_name:u.display_name,role:u.role}},200,{'Set-Cookie':cookie(token)});
+  return json({ok:true,user:{id:u.id,username:u.username,display_name:u.display_name,role:u.role,can_import_excel:u.can_import_excel,can_sync_excel:u.can_sync_excel}},200,{'Set-Cookie':cookie(token)});
 }
 async function setup(db,request,env) {
   const p=await body(request);
@@ -348,7 +350,7 @@ async function listRooms(db,user) {
 }
 async function listUsers(db,user) {
   access(user,'super_admin','admin');
-  const users=await db.prepare('SELECT id,username,display_name,role,active,created_at FROM users ORDER BY role,display_name').all();
+  const users=await db.prepare('SELECT id,username,display_name,role,active,can_import_excel,can_sync_excel,created_at FROM users ORDER BY role,display_name').all();
   const trs=await db.prepare('SELECT user_id,room_id FROM teacher_rooms').all();
   const tcs=await db.prepare('SELECT user_id,club_id FROM teacher_clubs').all();
   return {users:users.results,teacher_rooms:trs.results,teacher_clubs:tcs.results};
@@ -366,17 +368,23 @@ async function addUser(db,user,request) {
 }
 async function assignTeacher(db,user,request) {
   access(user,'super_admin','admin');const p=await body(request);
-  const target=await db.prepare("SELECT id,role FROM users WHERE id=? AND role='teacher'").bind(p.user_id).first();
+  const target=await db.prepare("SELECT id,role,can_import_excel,can_sync_excel FROM users WHERE id=? AND role='teacher'").bind(p.user_id).first();
   if(!target) throw error('ไม่พบบัญชีครู');
   if(!Array.isArray(p.room_ids)||!Array.isArray(p.club_ids)||p.room_ids.length>50||p.club_ids.length>1) throw error('ข้อมูลมอบหมายไม่ถูกต้อง (ครูรับชุมนุมได้หนึ่งชุมนุม)');
+  if(p.can_import_excel!==undefined && typeof p.can_import_excel!=='boolean')throw error('สิทธิ์นำเข้า Excel ต้องเป็น true/false');
+  if(p.can_sync_excel!==undefined && typeof p.can_sync_excel!=='boolean')throw error('สิทธิ์ซิงก์ Excel ต้องเป็น true/false');
+  const canImport=p.can_import_excel===undefined?!!target.can_import_excel:p.can_import_excel;
+  const canSync=p.can_sync_excel===undefined?!!target.can_sync_excel:p.can_sync_excel;
+  if(canSync&&!canImport)throw error('ต้องเปิดสิทธิ์นำเข้าก่อน จึงอนุญาตให้ซิงก์ทั้งห้องได้');
   const roomIds=[...new Set(p.room_ids.map(v=>String(v)))],clubIds=[...new Set(p.club_ids.map(v=>String(v)))];
   for(const r of roomIds)if(!await db.prepare('SELECT 1 AS ok FROM rooms WHERE id=?').bind(r).first())throw error('ไม่พบห้องเรียน '+r);
   for(const c of clubIds)if(!await db.prepare('SELECT 1 AS ok FROM clubs WHERE id=? AND active=1').bind(c).first())throw error('ไม่พบชุมนุม '+c);
-  const statements=[db.prepare('DELETE FROM teacher_rooms WHERE user_id=?').bind(target.id),db.prepare('DELETE FROM teacher_clubs WHERE user_id=?').bind(target.id)];
+  const statements=[db.prepare('DELETE FROM teacher_rooms WHERE user_id=?').bind(target.id),db.prepare('DELETE FROM teacher_clubs WHERE user_id=?').bind(target.id),
+    db.prepare('UPDATE users SET can_import_excel=?,can_sync_excel=? WHERE id=?').bind(canImport?1:0,canSync?1:0,target.id)];
   for(const r of roomIds) statements.push(db.prepare('INSERT INTO teacher_rooms(user_id,room_id) VALUES(?,?)').bind(target.id,r));
   for(const c of clubIds) statements.push(db.prepare('INSERT INTO teacher_clubs(user_id,club_id) VALUES(?,?)').bind(target.id,c));
   statements.push(db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
-    .bind(user.id,'assign','user',target.id,JSON.stringify({rooms:roomIds,clubs:clubIds}),sqlNow()));
+    .bind(user.id,'assign','user',target.id,JSON.stringify({rooms:roomIds,clubs:clubIds,can_import_excel:canImport,can_sync_excel:canSync}),sqlNow()));
   await db.batch(statements);return {ok:true};
 }
 async function exportStudents(db,user) {
@@ -393,7 +401,7 @@ async function exportStudents(db,user) {
   for(const s of list.results) all.push([s.student_no,s.prefix,s.first_name,s.last_name,s.year,s.grade,s.room_no,s.club_name].map(quoted).join(','));
   return new Response('\uFEFF'+all.join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="schoolhub-students.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 }
-// SchoolHub v1.3 XLSX/CSV import: room-scoped server-side preview and atomic commit.
+// SchoolHub v1.4 XLSX/CSV import: admin or explicitly permitted homeroom teachers only.
 // No XLSX file bytes are ever stored in public assets or in D1.
 const IMPORT_MAX_ROWS = 120;
 const normalizeClubName = v => cleanString(v,120).normalize('NFKC').replace(/\s+/g,' ').toLocaleLowerCase('th');
@@ -410,9 +418,12 @@ function parseImportRows(raw) {
 }
 function previewRowLine(entry,action,detail='') {return {line:entry.line,student_no:entry.student_no,student_name:[entry.prefix,entry.first_name,entry.last_name].filter(Boolean).join(' '),action,detail};}
 async function importPlan(db,user,p) {
-  access(user,'super_admin','admin');
+  if(!canImportExcel(user))throw error('บัญชีนี้ไม่ได้รับสิทธิ์นำเข้า Excel',403,'IMPORT_PERMISSION');
   const roomId=required(p.room_id,'ห้องเรียน',80), mode=cleanString(p.mode,20);
   if(!['merge','sync'].includes(mode)) throw error('กรุณาเลือกโหมดเพิ่ม/อัปเดต หรือซิงก์ทั้งห้อง');
+  if(mode==='sync'&&!canSyncExcel(user))throw error('ครูยังไม่ได้รับสิทธิ์ซิงก์ทั้งห้อง',403,'SYNC_PERMISSION');
+  if(!isAdmin(user) && p.override_capacity===true)throw error('อนุญาตเพิ่มเกินโควตาได้เฉพาะ Admin',403,'FORBIDDEN');
+  if(!isAdmin(user) && !(await visibleRoom(db,user,roomId)))throw error('นำเข้าได้เฉพาะห้องเรียนที่ได้รับมอบหมาย',403,'ROOM_SCOPE');
   const rows=parseImportRows(p.rows);
   const room=await db.prepare('SELECT id,year,grade,room_no FROM rooms WHERE id=?').bind(roomId).first();
   if(!room) throw error('ไม่พบห้องเรียน');
@@ -501,6 +512,12 @@ async function importCommit(db,user,request){
   if(plan.mode==='sync' && p.confirm_sync!==plan.room.id)throw error('โหมดซิงก์ต้องยืนยันรหัสห้องให้ถูกต้อง',400,'CONFIRM_REQUIRED');
   if(plan.mode==='sync' && plan.summary.archive>0 && !p.acknowledge_archives)throw error('กรุณายืนยันการนำรายชื่อที่ไม่อยู่ในไฟล์ออกก่อน',400);
   const now=sqlNow(),runId=id(), statements=[];
+  // Revalidate teacher permissions and room membership atomically at commit time.
+  // Covers an admin revoking access while a preview is open in another browser.
+  if(!isAdmin(user))statements.push(checkGuard(db,`EXISTS(
+    SELECT 1 FROM users u JOIN teacher_rooms tr ON tr.user_id=u.id
+    WHERE u.id=? AND u.role='teacher' AND u.active=1 AND u.can_import_excel=1
+      AND (?='merge' OR u.can_sync_excel=1) AND tr.room_id=?)`,[user.id,plan.mode,plan.room.id]));
   const reason=plan.reason||'';
   for(const op of plan.ops){
     if(op.kind==='add'){
@@ -547,9 +564,12 @@ async function importCommit(db,user,request){
   }
   return {ok:true,run_id:runId,room:plan.room,summary:plan.summary,at:now};
 }
-async function importHistory(db,user){access(user,'super_admin','admin');
+async function importHistory(db,user){
+  if(!canImportExcel(user))throw error('บัญชีนี้ไม่ได้รับสิทธิ์นำเข้า Excel',403,'IMPORT_PERMISSION');
+  const where=isAdmin(user)?'1=1':'i.actor_id=?';
   const result=await db.prepare(`SELECT i.id,i.room_id,i.mode,i.added,i.updated,i.archived,i.unchanged,i.reason,i.created_at,
-    u.display_name AS actor FROM excel_import_runs i JOIN users u ON u.id=i.actor_id ORDER BY i.created_at DESC LIMIT 30`).all();
+    u.display_name AS actor FROM excel_import_runs i JOIN users u ON u.id=i.actor_id
+    WHERE ${where} ORDER BY i.created_at DESC LIMIT 30`).bind(...(isAdmin(user)?[]:[user.id])).all();
   return {items:result.results};
 }
 
@@ -565,7 +585,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.3.1'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.4.0'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
