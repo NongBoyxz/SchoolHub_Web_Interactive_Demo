@@ -1,4 +1,4 @@
-// SchoolHub v1.6.2 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
+// SchoolHub v1.6.3 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
 const encoder = new TextEncoder();
 const MAX_BODY = 90000;
 const SESSION_SECONDS = 8 * 3600;
@@ -415,7 +415,7 @@ async function listRooms(db,user) {
 }
 async function listUsers(db,user) {
   access(user,'super_admin','admin');
-  const users=await db.prepare('SELECT id,username,display_name,role,active,can_import_excel,can_sync_excel,can_import_club_excel,can_sync_club_excel,created_at FROM users ORDER BY active DESC,role,display_name').all();
+  const users=await db.prepare('SELECT id,username,display_name,role,active,can_import_excel,can_sync_excel,can_import_club_excel,can_sync_club_excel,created_at FROM users WHERE purged_at IS NULL ORDER BY active DESC,role,display_name').all();
   const trs=await db.prepare('SELECT user_id,room_id FROM teacher_rooms').all();
   const tcs=await db.prepare('SELECT user_id,club_id FROM teacher_clubs').all();
   return {users:users.results,teacher_rooms:trs.results,teacher_clubs:tcs.results};
@@ -440,7 +440,7 @@ async function removeUser(db, actor, userId, request) {
   const p=await body(request);
   const reason=required(p.reason,'เหตุผลในการลบบัญชี',300);
   if(reason.length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร');
-  const target=await db.prepare('SELECT id,username,display_name,role,active FROM users WHERE id=?').bind(userId).first();
+  const target=await db.prepare('SELECT id,username,display_name,role,active FROM users WHERE id=? AND purged_at IS NULL').bind(userId).first();
   if(!target) throw error('ไม่พบบัญชีผู้ใช้',404,'NOT_FOUND');
   if(target.active!==1) throw error('บัญชีถูกนำออกแล้ว',409,'ALREADY_REMOVED');
   if(String(p.confirm_username||'').trim().toLowerCase()!==target.username.toLowerCase())
@@ -475,7 +475,7 @@ async function restoreUser(db,actor,userId,request){
   const p=await body(request);
   const reason=required(p.reason,'เหตุผลในการกู้คืนบัญชี',300);
   if(reason.length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร');
-  const target=await db.prepare('SELECT id,username,display_name,role,active FROM users WHERE id=?').bind(userId).first();
+  const target=await db.prepare('SELECT id,username,display_name,role,active FROM users WHERE id=? AND purged_at IS NULL').bind(userId).first();
   if(!target) throw error('ไม่พบบัญชีผู้ใช้',404,'NOT_FOUND');
   if(target.active!==0) throw error('บัญชีนี้ยังเปิดใช้งานอยู่',409,'ALREADY_ACTIVE');
   if(String(p.confirm_username||'').trim().toLowerCase()!==target.username.toLowerCase())
@@ -490,6 +490,44 @@ async function restoreUser(db,actor,userId,request){
   try{await db.batch(statements);}
   catch(e){if(/CHECK constraint failed/i.test(String(e)))throw error('สถานะบัญชีเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่',409,'STALE_ACCOUNT');throw e;}
   return {ok:true,restored:true,permissions_reset:true};
+}
+// v1.6.3: This removes a disabled account permanently from the account UI
+// and prevents login/restore. D1 foreign keys keep a pseudonymous tombstone
+// row for actor attribution in historical activity; this is NOT a physical
+// erasure of all records or database backups.
+async function purgeRemovedAccount(db, actor, userId, request) {
+  access(actor,'super_admin');
+  if(actor.id===userId) throw error('ไม่สามารถลบบัญชีของตัวเองได้',403,'SELF_DELETE');
+  const p=await body(request);
+  if(p.confirm!=='ลบถาวร') throw error('กรุณาพิมพ์คำว่า ลบถาวร เพื่อยืนยัน',400,'CONFIRM_REQUIRED');
+  const reason=required(p.reason,'เหตุผลในการลบถาวร',300);
+  if(reason.length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร',400);
+  const target=await db.prepare('SELECT id,username,active FROM users WHERE id=? AND purged_at IS NULL').bind(userId).first();
+  if(!target) throw error('ไม่พบบัญชีในรายการที่นำออกแล้ว',404,'NOT_FOUND');
+  if(target.active!==0) throw error('ต้องนำบัญชีออกจากการใช้งานก่อนจึงลบถาวรได้',409,'ACCOUNT_ACTIVE');
+  if(String(p.confirm_username||'').trim().toLowerCase()!==target.username.toLowerCase())
+    throw error('กรุณาพิมพ์ชื่อผู้ใช้ให้ตรงเพื่อยืนยัน',400,'CONFIRM_USERNAME');
+  const at=sqlNow(), placeholder='purged_'+randomHex(16), salt=randomHex(16), password=randomHex(32);
+  try {
+    await db.batch([
+      checkGuard(db,`EXISTS(SELECT 1 FROM users WHERE id=? AND role='super_admin' AND active=1)
+        AND EXISTS(SELECT 1 FROM users WHERE id=? AND username=? AND active=0 AND purged_at IS NULL)`,
+        [actor.id,target.id,target.username]),
+      db.prepare(`UPDATE users SET username=?,display_name='บัญชีที่ลบถาวร',password_salt=?,password_hash=?,
+        active=0,can_import_excel=0,can_sync_excel=0,can_import_club_excel=0,can_sync_club_excel=0,purged_at=?
+        WHERE id=? AND active=0 AND purged_at IS NULL`).bind(placeholder,salt,password,at,target.id),
+      db.prepare('DELETE FROM sessions WHERE user_id=?').bind(target.id),
+      db.prepare('DELETE FROM teacher_rooms WHERE user_id=?').bind(target.id),
+      db.prepare('DELETE FROM teacher_clubs WHERE user_id=?').bind(target.id),
+      db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+        .bind(actor.id,'permanently_remove_account','user',target.id,JSON.stringify({reason,irreversible:true,tombstone:true}),at),
+      db.prepare('DELETE FROM excel_import_guard')
+    ]);
+  }catch(e) {
+    if(/CHECK constraint failed/i.test(String(e))) throw error('สถานะบัญชีเปลี่ยนไป กรุณาโหลดใหม่',409,'STALE_ACCOUNT');
+    throw e;
+  }
+  return {ok:true,removed_permanently:true,can_restore:false};
 }
 // SchoolHub 1.6.2 — Super Admin may permanently remove ONE account-removal
 // audit entry. Keep a minimal separate purge event for accountability; never
@@ -980,7 +1018,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.2'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.3'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -1029,6 +1067,7 @@ export async function onRequest({request,env}) {
     if(route==='users'&&request.method==='POST')return json(await addUser(db,user,request),201);
     if(/^users\/[^/]+\/remove$/.test(route)){requireMethod(request.method,'POST');return json(await removeUser(db,user,route.split('/')[1],request));}
     if(/^users\/[^/]+\/restore$/.test(route)){requireMethod(request.method,'POST');return json(await restoreUser(db,user,route.split('/')[1],request));}
+    if(/^users\/[^/]+\/purge$/.test(route)){requireMethod(request.method,'POST');return json(await purgeRemovedAccount(db,user,route.split('/')[1],request));}
     if(route==='assignments'&&request.method==='POST')return json(await assignTeacher(db,user,request));
     if(route==='audit/user-removals'){requireMethod(request.method,'GET');return json(await listUserRemovalHistory(db,user,url));}
     if(/^audit\/user-removals\/[^/]+\/purge$/.test(route)){

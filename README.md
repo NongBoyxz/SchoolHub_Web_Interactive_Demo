@@ -1,6 +1,13 @@
-# SchoolHub Cloudflare v1.6.2 — โรงเรียนเทพศาลาประชาสรรค์
+# SchoolHub Cloudflare v1.6.3 — โรงเรียนเทพศาลาประชาสรรค์
 
 This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` binding. Do not commit database exports, real student rosters, access tokens, or user passwords.
+
+## Changes in 1.6.3
+- Super Admin can use **ลบถาวร** inside **บัญชีที่นำออกแล้ว**.
+- A removed account disappears from the user list and cannot be restored.
+- Preserve historical foreign keys through a pseudonymous user tombstone; this is not a physical erasure of all past records or backups.
+- New D1 migration: `migrations/0006_purged_accounts.sql`. Backup D1 and apply the migration **once before deploying v1.6.3**.
+- Earlier v1.6.2 removal-history feature is unchanged.
 
 ## Changes in 1.6.2
 
@@ -10,7 +17,7 @@ This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` bin
 - Admin and Teacher roles cannot view or purge this special history via the API. Server checks permissions and records audit atomically.
 - No migration required. Back up D1; don't run `apply_real_data.py` or earlier migrations again.
 
-See `INSTALL_TH_v1.6.2.md` for the Ubuntu upgrade steps.
+See `INSTALL_TH_v1.6.3.md` for the Ubuntu upgrade steps.
 
 ## Changes in 1.6.1
 

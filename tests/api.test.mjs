@@ -9,6 +9,7 @@ sqlite.exec(readFileSync(new URL('../migrations/0002_student_archives.sql',impor
 sqlite.exec(readFileSync(new URL('../migrations/0003_excel_import.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0004_teacher_excel_permissions.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0005_club_import_community_attendance.sql',import.meta.url),'utf8'));
+sqlite.exec(readFileSync(new URL('../migrations/0006_purged_accounts.sql',import.meta.url),'utf8'));
 const db={
  prepare(sql){let stmt=sqlite.prepare(sql), args=[];
    const wrap={bind(...v){args=v;return wrap;},first(){return stmt.get(...args)??null;},all(){return {results:stmt.all(...args)};},run(){return {meta:{changes:stmt.run(...args).changes}};}};
@@ -470,4 +471,44 @@ test('v1.6.2 only Super Admin can permanently purge one account-removal history 
   assert.ok(r.data.items.some(x=>x.entity_id!==targetId),'other removal histories remain');
   r=await call('audit/user-removals?page=0','GET',null,session);
   assert.equal(r.status,400);
+});
+
+
+test('v1.6.3 Super Admin can permanently remove a previously disabled user from the account list without breaking referenced history',async()=>{
+  let r=await call('users','POST',{username:'purgetest',display_name:'ครูทดสอบลบถาวร',role:'teacher',password:'password-purge-test-2026'},session);
+  assert.equal(r.status,201); const uid=r.data.id;
+  r=await call('auth/login','POST',{username:'purgetest',password:'password-purge-test-2026'});
+  assert.equal(r.status,200);const cookie=r.cookie.split(';')[0];
+  // Create a referenced audit entry to prove a tombstone preserves foreign keys.
+  r=await call('auth/change-password','POST',{old_password:'password-purge-test-2026',new_password:'new-purge-password-2026'},cookie);
+  assert.equal(r.status,200);
+  r=await call('users/'+uid+'/purge','POST',{confirm:'ลบถาวร',confirm_username:'purgetest',reason:'ลบบัญชีทดสอบเก่า'},session);
+  assert.equal(r.status,409,'cannot purge an active account');
+  r=await call('users/'+uid+'/remove','POST',{confirm_username:'purgetest',reason:'ปิดบัญชีที่ไม่ใช้แล้ว'},session);
+  assert.equal(r.status,200);
+  const regular=await call('auth/login','POST',{username:'teacher1',password:'teacher-pass-2026'});
+  assert.equal(regular.status,200);
+  r=await call('users/'+uid+'/purge','POST',{confirm:'ลบถาวร',confirm_username:'purgetest',reason:'ลบบัญชีทดสอบเก่า'},regular.cookie.split(';')[0]);
+  assert.equal(r.status,403,'teacher must not purge');
+  r=await call('users/'+uid+'/purge','POST',{confirm:'wrong',confirm_username:'purgetest',reason:'ลบบัญชีทดสอบเก่า'},session);
+  assert.equal(r.status,400);
+  r=await call('users/'+uid+'/purge','POST',{confirm:'ลบถาวร',confirm_username:'wrong',reason:'ลบบัญชีทดสอบเก่า'},session);
+  assert.equal(r.status,400);
+  r=await call('users/'+uid+'/purge','POST',{confirm:'ลบถาวร',confirm_username:'purgetest',reason:'ลบบัญชีทดสอบเก่า'},session);
+  assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.can_restore,false);
+  r=await call('users','GET',null,session);
+  assert.ok(!r.data.users.some(x=>x.id===uid),'purged user absent from account list');
+  let tombstone=sqlite.prepare('SELECT id,username,display_name,active,purged_at FROM users WHERE id=?').get(uid);
+  assert.ok(tombstone.purged_at);assert.notEqual(tombstone.username,'purgetest');assert.equal(tombstone.active,0);
+  assert.equal(tombstone.display_name,'บัญชีที่ลบถาวร');
+  assert.ok(sqlite.prepare("SELECT id FROM audit_log WHERE actor_id=? AND action='change_password'").get(uid),'references remain valid');
+  assert.ok(sqlite.prepare("SELECT id FROM audit_log WHERE entity_id=? AND action='permanently_remove_account'").get(uid));
+  r=await call('users/'+uid+'/restore','POST',{confirm_username:'purgetest',reason:'ทดสอบกู้คืน'},session);
+  assert.equal(r.status,404,'purged account cannot be restored');
+  r=await call('users/'+uid+'/purge','POST',{confirm:'ลบถาวร',confirm_username:'purgetest',reason:'ทำซ้ำ'},session);
+  assert.equal(r.status,404,'purge is not repeatable');
+  r=await call('auth/login','POST',{username:'purgetest',password:'new-purge-password-2026'});
+  assert.equal(r.status,401);
+  r=await call('users','POST',{username:'purgetest',display_name:'ครูใหม่',role:'teacher',password:'new-teacher-password-2026'},session);
+  assert.equal(r.status,201,'original username can be used again');
 });

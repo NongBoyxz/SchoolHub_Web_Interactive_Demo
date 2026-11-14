@@ -1,3 +1,12 @@
+## v1.6.3 — Permanent removal from the disabled-account list
+- Add **ลบถาวร** next to **กู้คืนบัญชี** in **บัญชีที่นำออกแล้ว**.
+- Super Admin only; target account must already be inactive.
+- Require exact username + phrase ลบถาวร + meaningful reason.
+- Prevent login, remove from users list, disallow restoring and free the original username for reuse.
+- Keep an anonymized account reference for D1 foreign-key consistency and append an audit event.
+- `0006_purged_accounts.sql` adds `purged_at`; run once before deploy.
+- No student, room, club or attendance data reset.
+
 # SchoolHub — Changelog
 
 ## v1.6.2 — Super Admin purge for account-removal audit entries
