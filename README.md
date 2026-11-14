@@ -1,6 +1,16 @@
-# SchoolHub Cloudflare v1.6.1 — โรงเรียนเทพศาลาประชาสรรค์
+# SchoolHub Cloudflare v1.6.2 — โรงเรียนเทพศาลาประชาสรรค์
 
 This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` binding. Do not commit database exports, real student rosters, access tokens, or user passwords.
+
+## Changes in 1.6.2
+
+- **Super Admin only:** open **บัญชีและสิทธิ์ → ดู/ลบประวัติการลบบัญชี** or go to **ประวัติการแก้ไข** to see all account-removal audit records, 50 per page.
+- Permanently delete **one selected `remove_user` audit entry** after supplying a reason (at least 5 characters) and typing `ลบประวัติ` exactly. This affects the active D1 audit table; database backups may still contain older copies.
+- A separate minimal `purge_user_removal_history` audit event is retained to identify which record was purged and by whom. Removing an event does **not** delete/deactivate/restore the actual user or delete any other audit records.
+- Admin and Teacher roles cannot view or purge this special history via the API. Server checks permissions and records audit atomically.
+- No migration required. Back up D1; don't run `apply_real_data.py` or earlier migrations again.
+
+See `INSTALL_TH_v1.6.2.md` for the Ubuntu upgrade steps.
 
 ## Changes in 1.6.1
 

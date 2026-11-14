@@ -1,5 +1,14 @@
 # SchoolHub — Changelog
 
+## v1.6.2 — Super Admin purge for account-removal audit entries
+
+- Added dedicated, paginated account-removal audit list (`GET /api/audit/user-removals`) available **only to Super Admin**.
+- Super Admin can purge **one exact** `remove_user` audit entry by ID (`POST /api/audit/user-removals/:id/purge`) with mandatory reason and typed confirmation.
+- Atomic transaction deletes the selected record and writes a minimal `purge_user_removal_history` audit event. Audit event does not include the removed account username. Other history, user rows, session records and permissions are untouched.
+- Added shortcut from **บัญชีและสิทธิ์**, and paginated list/dialog in **ประวัติการแก้ไข**. Pagination covers older removal records not shown in the latest 100 general audit entries.
+- Added API test suite scenario for Super Admin/other roles, confirmation, duplicate purge, transaction consistency, and preserving unrelated history.
+- No schema migration; existing D1 with real student data remains untouched by deploying these code files.
+
 ## v1.6.1 — Super Admin account removal and recovery
 
 - Added account **ลบบัญชี** only for Super Admin, requiring a reason (≥5 characters) and typed confirmation of the exact username.

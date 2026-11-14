@@ -1,4 +1,4 @@
-// SchoolHub v1.5 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
+// SchoolHub v1.6.2 — Cloudflare Pages Functions + D1. No student data is bundled in static assets.
 const encoder = new TextEncoder();
 const MAX_BODY = 90000;
 const SESSION_SECONDS = 8 * 3600;
@@ -491,6 +491,47 @@ async function restoreUser(db,actor,userId,request){
   catch(e){if(/CHECK constraint failed/i.test(String(e)))throw error('สถานะบัญชีเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่',409,'STALE_ACCOUNT');throw e;}
   return {ok:true,restored:true,permissions_reset:true};
 }
+// SchoolHub 1.6.2 — Super Admin may permanently remove ONE account-removal
+// audit entry. Keep a minimal separate purge event for accountability; never
+// delete a users row or unrelated attendance, assignments or audit records.
+async function listUserRemovalHistory(db, actor, url) {
+  access(actor,'super_admin');
+  const page=Number(url.searchParams.get('page')||1);
+  if(!Number.isSafeInteger(page)||page<1||page>100000) throw error('หน้ารายการไม่ถูกต้อง');
+  const count=await db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='remove_user' AND entity_type='user'").first();
+  const rows=await db.prepare(`SELECT a.id,a.at,a.entity_id,a.details,actor.display_name AS actor,
+    target.username AS current_username,target.active AS current_active
+    FROM audit_log a JOIN users actor ON actor.id=a.actor_id
+    LEFT JOIN users target ON target.id=a.entity_id
+    WHERE a.action='remove_user' AND a.entity_type='user'
+    ORDER BY a.id DESC LIMIT 50 OFFSET ?`).bind((page-1)*50).all();
+  return {items:rows.results,total:Number(count?.n||0),page,page_size:50};
+}
+async function purgeUserRemovalHistory(db, actor, auditId, request) {
+  access(actor,'super_admin');
+  const logId=Number(auditId);
+  if(!/^[1-9]\d{0,14}$/.test(String(auditId))||!Number.isSafeInteger(logId))throw error('รหัสประวัติไม่ถูกต้อง');
+  const p=await body(request);
+  if(p.confirm!=='ลบประวัติ')throw error('กรุณาพิมพ์คำว่า ลบประวัติ เพื่อยืนยัน',400,'CONFIRM_REQUIRED');
+  const reason=required(p.reason,'เหตุผลในการลบประวัติ',300);
+  if(reason.length<5)throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษร');
+  const existing=await db.prepare("SELECT id FROM audit_log WHERE id=? AND action='remove_user' AND entity_type='user'").bind(logId).first();
+  if(!existing)throw error('ไม่พบประวัติการลบบัญชีรายการนี้',404,'NOT_FOUND');
+  const at=sqlNow();
+  try {
+    await db.batch([
+      checkGuard(db,"EXISTS(SELECT 1 FROM users WHERE id=? AND role='super_admin' AND active=1) AND EXISTS(SELECT 1 FROM audit_log WHERE id=? AND action='remove_user' AND entity_type='user')",[actor.id,logId]),
+      db.prepare("DELETE FROM audit_log WHERE id=? AND action='remove_user' AND entity_type='user'").bind(logId),
+      db.prepare('INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)')
+        .bind(actor.id,'purge_user_removal_history','audit_log',String(logId),JSON.stringify({reason,purged_audit_id:logId}),at),
+      db.prepare('DELETE FROM excel_import_guard')
+    ]);
+  }catch(e){
+    if(/CHECK constraint failed/i.test(String(e))) throw error('ประวัติหรือสิทธิ์เปลี่ยนแล้ว กรุณาโหลดรายการใหม่',409,'STALE_AUDIT');
+    throw e;
+  }
+  return {ok:true,deleted_audit_id:logId};
+}
 async function assignTeacher(db,user,request) {
   access(user,'super_admin','admin');const p=await body(request);
   const target=await db.prepare("SELECT id,role,can_import_excel,can_sync_excel,can_import_club_excel,can_sync_club_excel FROM users WHERE id=? AND role='teacher' AND active=1").bind(p.user_id).first();
@@ -939,7 +980,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.1'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.2'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -989,6 +1030,10 @@ export async function onRequest({request,env}) {
     if(/^users\/[^/]+\/remove$/.test(route)){requireMethod(request.method,'POST');return json(await removeUser(db,user,route.split('/')[1],request));}
     if(/^users\/[^/]+\/restore$/.test(route)){requireMethod(request.method,'POST');return json(await restoreUser(db,user,route.split('/')[1],request));}
     if(route==='assignments'&&request.method==='POST')return json(await assignTeacher(db,user,request));
+    if(route==='audit/user-removals'){requireMethod(request.method,'GET');return json(await listUserRemovalHistory(db,user,url));}
+    if(/^audit\/user-removals\/[^/]+\/purge$/.test(route)){
+      requireMethod(request.method,'POST');return json(await purgeUserRemovalHistory(db,user,route.split('/')[2],request));
+    }
     if(route==='audit'&&request.method==='GET') {access(user,'super_admin','admin');const q=await db.prepare(`SELECT a.id,a.at,a.action,a.entity_type,a.entity_id,a.details,u.display_name AS actor
       FROM audit_log a JOIN users u ON u.id=a.actor_id ORDER BY a.id DESC LIMIT 100`).all();return json({items:q.results});}
     if(route==='export/students'&&request.method==='GET')return await exportStudents(db,user);

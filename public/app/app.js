@@ -1,8 +1,8 @@
 import {readSchoolImport,readSchoolClubImport} from './xlsx-reader.js';
 import {buildActivityForms} from './form-xlsx.js';
-// SchoolHub Live v1.6.1 — role-scoped teacher Excel import; no student data in static assets.
+// SchoolHub Live v1.6.2 — role-scoped teacher Excel import; no student data in static assets.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
-const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,roomBreakdown:[],formOptions:null,studentTotal:0,audit:[],archived:[],importHistory:[],importDraft:null,clubImportDraft:null,clubImportHistory:[],allowedClubs:[],community:{room_id:'',date:'',term:1,items:[],dates:[]},page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
+const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,roomBreakdown:[],formOptions:null,studentTotal:0,audit:[],removalHistory:{items:[],total:0,page:1,page_size:50},removalHistoryPage:1,archived:[],importHistory:[],importDraft:null,clubImportDraft:null,clubImportHistory:[],allowedClubs:[],community:{room_id:'',date:'',term:1,items:[],dates:[]},page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const allAdmin=()=>['super_admin','admin'].includes(state.user?.role);
 const canUseImport=()=>allAdmin()||(state.user?.role==='teacher'&&Number(state.user.can_import_excel)===1);
@@ -226,9 +226,11 @@ function renderUsers(){
  const deletedRows=removed.map(u=>`<tr><td><strong>${esc(u.display_name)}</strong><div class="sub">${esc(u.username)}</div></td><td>${esc(u.role)}</td><td><span class="account-disabled">ลบออกจากการใช้งานแล้ว</span></td><td>${state.user.role==='super_admin'?`<button class="btn small" data-restore-user="${esc(u.id)}">กู้คืนบัญชี</button>`:'—'}</td></tr>`).join('');
  shell(`${title('บัญชีและสิทธิ์','สร้างบัญชีครู มอบหมายงาน และจัดการบัญชีผู้ใช้',`<button class="btn primary" id="add-user">+ สร้างบัญชี</button>`)}
  <div class="warning-box" style="margin-bottom:15px">การลบบัญชีทำได้เฉพาะ Super Admin • บัญชีที่นำออกจะเข้าสู่ระบบไม่ได้ทันที • ประวัติการทำงานเดิมยังคงอยู่</div>
+ ${state.user.role==='super_admin'?'<div class="actions" style="margin-bottom:15px"><button class="btn" id="go-user-removal-history">🕘 ดู/ลบประวัติการลบบัญชี</button></div>':''}
  ${table(['ชื่อผู้ใช้','บทบาท','สถานะ','หน้าที่','สิทธิ์ Excel','จัดการ'],rows)}
  ${removed.length?`<details class="card removed-accounts"><summary>บัญชีที่นำออกแล้ว (${removed.length})</summary><p class="sub">กู้คืนได้โดย Super Admin แต่ต้องมอบหมายห้องเรียน ชุมนุม และสิทธิ์นำเข้าใหม่</p>${table(['ชื่อผู้ใช้','บทบาท','สถานะ','จัดการ'],deletedRows)}</details>`:''}`);
  root.querySelector('#add-user').onclick=()=>userDialog();
+ if(state.user.role==='super_admin')root.querySelector('#go-user-removal-history').onclick=()=>{state.tab='audit';state.removalHistoryPage=1;loadTab();};
  root.querySelectorAll('[data-assign]').forEach(b=>b.onclick=()=>assignDialog(state.users.find(u=>u.id===b.dataset.assign)));
  root.querySelectorAll('[data-remove-user]').forEach(b=>b.onclick=()=>removeUserDialog(state.users.find(u=>u.id===b.dataset.removeUser)));
  root.querySelectorAll('[data-restore-user]').forEach(b=>b.onclick=()=>restoreUserDialog(state.users.find(u=>u.id===b.dataset.restoreUser)));
@@ -273,8 +275,36 @@ function assignDialog(user){const ur=state.teacher_rooms.filter(x=>x.user_id===u
    can_sync_club_excel:!!form.querySelector('[name=can_sync_club_excel]:checked')
  }));
 }
-function renderAudit(){const rows=state.audit.map(x=>`<tr><td>${esc(new Date(x.at).toLocaleString('th-TH'))}</td><td>${esc(x.actor)}</td><td>${esc(x.action)}</td><td>${esc(x.entity_type)}</td><td title="${esc(x.entity_id)}">${esc(x.entity_id.slice(0,14))}</td></tr>`).join('');
- shell(`${title('ประวัติการแก้ไข','100 รายการล่าสุดจากฐานข้อมูล — ดูได้เฉพาะผู้ดูแล')}${table(['วันเวลา','ผู้ดำเนินการ','การดำเนินการ','ประเภท','รหัสรายการ'],rows)}`);
+function renderAudit(){
+ const rows=state.audit.map(x=>`<tr><td>${esc(new Date(x.at).toLocaleString('th-TH'))}</td><td>${esc(x.actor)}</td><td>${esc(x.action)}</td><td>${esc(x.entity_type)}</td><td title="${esc(x.entity_id)}">${esc(x.entity_id.slice(0,14))}</td></tr>`).join('');
+ const isSuper=state.user.role==='super_admin';
+ const history=state.removalHistory||{items:[],total:0,page:1,page_size:50};
+ const removalRows=(history.items||[]).map(x=>{
+   let d={};try{d=JSON.parse(x.details||'{}');}catch{}
+   const username=String(d.username||x.current_username||'ไม่ทราบชื่อบัญชี');
+   return `<tr><td>${esc(new Date(x.at).toLocaleString('th-TH'))}</td><td>${esc(username)}</td><td>${esc(d.display_name||'—')}</td><td>${esc(x.actor)}</td><td>${esc(d.reason||'—')}</td><td><button class="btn small danger-outline" data-purge-removal="${Number(x.id)}">ลบประวัตินี้</button></td></tr>`;
+ }).join('');
+ const removalPanel=isSuper?`<section class="card stack" style="margin-bottom:18px"><h3>🗑️ ประวัติการลบบัญชี (${Number(history.total||0)} รายการ)</h3>
+ <p class="sub">Super Admin สามารถลบประวัติการลบบัญชีเป็นรายรายการได้ การลบไม่เปลี่ยนสถานะบัญชี ไม่ลบประวัติอื่น และมีบันทึกยืนยันการล้างประวัติแยกต่างหาก</p>
+ ${table(['วันที่ลบบัญชี','ชื่อผู้ใช้','ชื่อแสดง','ผู้ดำเนินการ','เหตุผลเดิม','จัดการ'],removalRows)}
+ <div class="actions"><button class="btn small" id="removal-history-prev" ${history.page<=1?'disabled':''}>← ก่อนหน้า</button>
+ <span class="sub">หน้า ${Number(history.page||1)} / ${Math.max(1,Math.ceil(Number(history.total||0)/50))}</span>
+ <button class="btn small" id="removal-history-next" ${history.page*50>=history.total?'disabled':''}>ถัดไป →</button></div></section>`:'';
+ shell(`${title('ประวัติการแก้ไข','100 รายการล่าสุดจากฐานข้อมูล — ดูได้เฉพาะผู้ดูแล')}${removalPanel}${table(['วันเวลา','ผู้ดำเนินการ','การดำเนินการ','ประเภท','รหัสรายการ'],rows)}`);
+ if(isSuper){
+  root.querySelectorAll('[data-purge-removal]').forEach(b=>b.onclick=()=>purgeRemovalDialog(history.items.find(x=>Number(x.id)===Number(b.dataset.purgeRemoval))));
+  root.querySelector('#removal-history-prev').onclick=()=>{state.removalHistoryPage=Math.max(1,state.removalHistoryPage-1);loadTab();};
+  root.querySelector('#removal-history-next').onclick=()=>{state.removalHistoryPage++;loadTab();};
+ }
+}
+function purgeRemovalDialog(entry){
+ if(!entry||state.user.role!=='super_admin')return;
+ let details={};try{details=JSON.parse(entry.details||'{}');}catch{}
+ const username=String(details.username||entry.current_username||'ไม่ทราบชื่อบัญชี');
+ const fields=`<div class="warning-box">คุณกำลังลบ <strong>ประวัติการลบบัญชี</strong> ของ <strong>${esc(username)}</strong> เมื่อ ${esc(new Date(entry.at).toLocaleString('th-TH'))}<br>การลบนี้ย้อนกลับไม่ได้จากหน้าเว็บ แต่ไม่ลบบัญชีและไม่ลบประวัติประเภทอื่น ระบบจะบันทึกว่า Super Admin ล้างประวัติรายการใด</div>
+ ${htmlField('reason','เหตุผลในการลบประวัติ (อย่างน้อย 5 ตัวอักษร)','',{max:300})}
+ ${htmlField('confirm','พิมพ์คำว่า ลบประวัติ เพื่อยืนยัน','',{max:20})}`;
+ showModal('ยืนยันลบประวัติการลบบัญชี',fields,async p=>post('audit/user-removals/'+entry.id+'/purge',p),{danger:true,submitText:'ลบประวัติถาวร',successText:'ลบประวัติการลบบัญชีรายการนี้แล้ว'});
 }
 // SchoolHub v1.4 permission-gated XLSX/CSV import UI. File contents never enter GitHub.
 function renderImport(){
@@ -607,7 +637,7 @@ async function loadTab(reload=false){if(!state.user)return;
     case 'rooms':renderRooms();break;
     case 'export':renderExport();break;
     case 'users':if(!allAdmin()){state.tab='dashboard';return loadTab();}Object.assign(state,await api('users'));renderUsers();break;
-    case 'audit':if(!allAdmin()){state.tab='dashboard';return loadTab();}state.audit=(await api('audit')).items;renderAudit();break;
+    case 'audit':if(!allAdmin()){state.tab='dashboard';return loadTab();}if(state.user.role==='super_admin'){const [a,h]=await Promise.all([api('audit'),api('audit/user-removals?page='+state.removalHistoryPage)]);state.audit=a.items;state.removalHistory=h;}else{state.audit=(await api('audit')).items;}renderAudit();break;
     default:state.tab='dashboard';return loadTab();
    }
  }catch(err){shell(`<div class="card stack"><h2>เปิดข้อมูลไม่สำเร็จ</h2><p>${esc(err.message)}</p><button class="btn" id="retry">ลองใหม่</button></div>`);root.querySelector('#retry').onclick=()=>loadTab();}
