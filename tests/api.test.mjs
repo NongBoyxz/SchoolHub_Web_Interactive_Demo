@@ -11,6 +11,7 @@ sqlite.exec(readFileSync(new URL('../migrations/0004_teacher_excel_permissions.s
 sqlite.exec(readFileSync(new URL('../migrations/0005_club_import_community_attendance.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0006_purged_accounts.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0007_student_roll_numbers.sql',import.meta.url),'utf8'));
+sqlite.exec(readFileSync(new URL('../migrations/0008_classroom_club_attendance.sql',import.meta.url),'utf8'));
 const db={
  prepare(sql){let stmt=sqlite.prepare(sql), args=[];
    const wrap={bind(...v){args=v;return wrap;},first(){return stmt.get(...args)??null;},all(){return {results:stmt.all(...args)};},run(){return {meta:{changes:stmt.run(...args).changes}};}};
@@ -543,4 +544,78 @@ test('v1.7 classroom roll numbers are displayed and sorted correctly with gaps, 
   assert.equal(r.status,200);
   const attendance=r.data.items.filter(s=>['ROLL100','ROLL200','ROLL300'].includes(s.student_no));
   assert.deepEqual(attendance.map(s=>s.student_no),['ROLL200','ROLL100','ROLL300']);
+});
+
+test('v1.8 room attendance: correct scope, status, audit, stale write and room mismatch',async()=>{
+ const date='2026-11-21',id='2569-1-1';
+ let r=await call(`attendance/roster?kind=room&id=${id}&date=${date}`,'GET',null,session);
+ assert.equal(r.status,200,JSON.stringify(r.data));
+ const person=r.data.items.find(s=>s.student_no==='ROLL100');assert.ok(person);
+ assert.equal(person.status,null);assert.equal(person.attendance_version,0);
+ r=await call('attendance/mark','POST',{kind:'room',id,date,term:2,student_id:person.id,status:'มา',version:0},session);
+ assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.version,1);
+ r=await call('attendance/mark','POST',{kind:'room',id,date,term:2,student_id:person.id,status:'ขาด',version:0},session);
+ assert.equal(r.status,409);assert.equal(r.data.code,'STALE');
+ r=await call('attendance/mark','POST',{kind:'room',id,date,term:1,student_id:person.id,status:'สาย',version:1},session);
+ assert.equal(r.status,409,'cannot change term of an existing day');
+ r=await call('attendance/mark','POST',{kind:'room',id,date,term:2,student_id:person.id,status:'ไม่ทราบ',version:1},session);
+ assert.equal(r.status,400);
+ r=await call('attendance/roster?kind=room&id=2569-1-1&date='+date,'GET',null,session);
+ assert.equal(r.data.counts['มา'],1);
+ assert.equal(r.data.items.find(s=>s.id===person.id).attendance_version,1);
+ r=await call('attendance/dates?kind=room&id=2569-1-1','GET',null,session);
+ assert.equal(r.status,200);assert.ok(r.data.items.find(x=>x.date===date&&x.marked===1));
+ const outOfRoom=sqlite.prepare("SELECT id FROM students WHERE room_id='2569-2-1' AND status='active' LIMIT 1").get();
+ assert.ok(outOfRoom);
+ r=await call('attendance/mark','POST',{kind:'room',id,date,term:2,student_id:outOfRoom.id,status:'มา',version:0},session);
+ assert.equal(r.status,409,'wrong-room student cannot be marked');
+ assert.ok(sqlite.prepare("SELECT id FROM audit_log WHERE action='room_attendance_mark' AND entity_id LIKE 'room:%'").get());
+});
+
+test('v1.8 club attendance: current membership and teacher scope',async()=>{
+ const date='2026-11-22';
+ const member=sqlite.prepare("SELECT id FROM students WHERE club_id=? AND status='active' LIMIT 1").get(clubId);
+ assert.ok(member,'club membership seeded');
+ let r=await call(`attendance/roster?kind=club&id=${encodeURIComponent(clubId)}&date=${date}`,'GET',null,session);
+ assert.equal(r.status,200);assert.ok(r.data.items.some(s=>s.id===member.id));
+ r=await call('attendance/mark','POST',{kind:'club',id:clubId,date,term:2,student_id:member.id,status:'สาย',version:0},session);
+ assert.equal(r.status,200,JSON.stringify(r.data));
+ r=await call(`forms/data?kind=club&id=${encodeURIComponent(clubId)}&term=2`,'GET',null,session);
+ assert.equal(r.status,200);assert.ok(r.data.sessions.some(x=>x.date===date&&x.marks.some(m=>m.student_id===member.id&&m.status==='สาย')));
+ const teacher=await call('auth/login','POST',{username:'teacher1',password:'teacher-pass-2026'});
+ assert.equal(teacher.status,200);const tc=teacher.cookie.split(';')[0];
+ r=await call(`attendance/roster?kind=club&id=${encodeURIComponent(clubId)}&date=${date}`,'GET',null,tc);
+ assert.equal(r.status,200);
+ r=await call('attendance/mark','POST',{kind:'club',id:clubId,date,term:2,student_id:member.id,status:'ขาด',version:1},tc);
+ assert.equal(r.status,200);
+ r=await call('attendance/roster?kind=room&id=2569-3-1&date='+date,'GET',null,tc);
+ assert.equal(r.status,403,'unassigned classroom is hidden');
+ r=await call('attendance/mark','POST',{kind:'room',id:'2569-3-1',date,term:2,student_id:member.id,status:'มา',version:0},tc);
+ assert.equal(r.status,403);
+ r=await call('attendance/roster?kind=club&id=some-other-club&date='+date,'GET',null,tc);
+ assert.ok([403,404].includes(r.status));
+});
+
+test('v1.8 independent activities: community is not overwritten by room/club marks',async()=>{
+ let r=await call('community/attendance?room_id=2569-1-1&date=2026-11-21','GET',null,session);
+ assert.equal(r.status,200);
+ assert.ok(r.data.items.every(x=>x.status===null),'room marks must not appear in community rows');
+ r=await call('attendance/roster?kind=room&id=2569-1-1&date=2026-11-21','GET',null,session);
+ assert.ok(r.data.items.some(x=>x.status==='มา'));
+ r=await call('attendance/roster?kind=club&id=2569-1-1&date=2026-11-21','GET',null,session);
+ assert.equal(r.status,404);
+});
+
+test('v1.8 two separate DOCX photo templates contain official photo frame and independent labels',async()=>{
+ const {getEntries,uncompressed}=await import('../public/app/form-xlsx.js');
+ for(const [filename,kind] of [['SchoolHub_Photo_Club_Template.docx','ชุมนุม'],['SchoolHub_Photo_Community_Template.docx','บำเพ็ญประโยชน์']]){
+   const bytes=readFileSync(new URL('../public/templates/'+filename,import.meta.url));
+   const entries=getEntries(bytes);
+   const xml=await uncompressed(entries.find(x=>x.name==='word/document.xml'));
+   const text=new TextDecoder().decode(xml);
+   assert.match(text,/ภาพประกอบการจัดกิจกรรม/);
+   assert.ok(text.includes(kind));
+   assert.equal(entries.filter(x=>x.name==='word/media/image1.jpg').length,1);
+   for(const key of ['ACTIVITY','DATE','PLACE','DETAILS','ADVISOR1','ADVISOR2'])assert.ok(text.includes('{{'+key+'}}'));
+ }
 });

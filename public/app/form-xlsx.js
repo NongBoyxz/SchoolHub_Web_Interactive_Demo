@@ -211,3 +211,5 @@ export async function buildActivityForms(options){
  const note=kind==='club'?'ชุมนุมยังไม่มีระบบเช็กชื่ออัตโนมัติ':kind==='other'?'เติมเฉพาะทะเบียนนักเรียน':sessionCount>20?'มีบันทึกเกิน 20 วัน: ฟอร์มใส่เฉพาะ 20 วันแรก กรุณาตรวจข้อมูลที่เหลือ':'เติมการเช็กชื่อที่มีข้อมูลจริง';
  return {blob,filename,pages:total,note};
 }
+// Shared ZIP primitives for the offline Word photo-report generator.
+export {getEntries,packageZip,updateEntry,uncompressed,crc32};

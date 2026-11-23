@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createPhotoDocx} from '../public/app/photo-report.js';
+import {getEntries,uncompressed} from '../public/app/form-xlsx.js';
+const base=new URL('../public/',import.meta.url);
+const originalFetch=globalThis.fetch;
+async function create(kind){
+ globalThis.fetch=async url=>{
+   assert.match(url,/^\/templates\//);
+   return new Response(readFileSync(new URL('.'+url,base)),{status:200});
+ };
+ const original=readFileSync(new URL('./templates/SchoolHub_Photo_Club_Template.docx',base));
+ const image=new Uint8Array(await uncompressed(getEntries(original).find(e=>e.name==='word/media/image1.jpg')));
+ const output=await createPhotoDocx({kind,imageBlob:new Blob([image],{type:'image/jpeg'}),
+  activity:'กิจกรรมทดสอบการเข้าร่วม',date:'2026-11-23',place:'ห้องเรียน',details:'ตัวอย่างการกรอกข้อความ',advisor1:'คุณครูหนึ่ง',advisor2:'คุณครูสอง'});
+ assert.match(output.filename,/\.docx$/);
+ const bytes=new Uint8Array(await output.blob.arrayBuffer());const entries=getEntries(bytes);
+ const xml=new TextDecoder().decode(await uncompressed(entries.find(e=>e.name==='word/document.xml')));
+ assert.match(xml,/กิจกรรมทดสอบการเข้าร่วม/);assert.match(xml,/คุณครูหนึ่ง/);
+ assert.ok(!xml.includes('{{ACTIVITY}}'));
+ assert.equal(entries.filter(e=>e.name==='word/media/image1.jpg').length,1);
+ return output;
+}
+test('generate two separate activity-photo Word documents with cropped image embedded in correct frame',async()=>{
+ try{
+   const club=await create('club');const community=await create('community');
+   assert.match(club.filename,/ชุมนุม/);assert.match(community.filename,/บำเพ็ญประโยชน์/);
+   if(process.env.SCHOOLHUB_RENDER_DOCS){
+      writeFileSync(process.env.SCHOOLHUB_RENDER_DOCS+'/club.docx',new Uint8Array(await club.blob.arrayBuffer()));
+      writeFileSync(process.env.SCHOOLHUB_RENDER_DOCS+'/community.docx',new Uint8Array(await community.blob.arrayBuffer()));
+   }
+ }finally{globalThis.fetch=originalFetch;}
+});

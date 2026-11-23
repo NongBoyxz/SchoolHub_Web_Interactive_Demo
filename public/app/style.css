@@ -85,3 +85,94 @@
 .nav-children{padding:0 0 6px 12px;display:grid;gap:2px}
 .nav-children .nav-btn{font-size:12px;padding:10px 12px;min-height:38px}
 .nav-group:has(.nav-btn.active)>summary{color:white;background:rgba(255,255,255,.09)}
+
+/* SchoolHub v1.8.0 — official school palette: sky blue / clean white / restrained gold. */
+:root{--bg:#f4f8fb;--navy:#123b59;--blue:#287fa7;--gold:#c99b39;--line:#d8e5eb;--muted:#61798a;--ink:#19374b;--light:#e8f6fb;--shadow:0 8px 26px rgba(25,69,90,.055)}
+body{font-family:"Noto Sans Thai","Leelawadee UI",Tahoma,"Segoe UI",sans-serif;line-height:1.5}
+.sidebar{background:linear-gradient(180deg,#123d60 0%,#12364f 100%);border-right:3px solid rgba(201,155,57,.9)}
+.sidebar-head{padding-bottom:17px;border-bottom:1px solid #53758b}
+.sidebar .nav-btn{color:#dcebf2}
+.nav-group[open]{background:rgba(255,255,255,.04)}
+.nav-btn:hover,.nav-btn.active{background:#245c7d;color:white}
+.nav-btn.active{box-shadow:inset 3px 0 var(--gold);font-weight:700}
+.nav-group summary:hover,.nav-group:has(.nav-btn.active)>summary{background:rgba(255,255,255,.10)}
+.nav-group summary{font-size:13px;color:#eef8fc}
+.topbar{border-bottom:2px solid #e4edf0}
+.page-heading{padding-bottom:6px}
+.page-heading h2{color:#164e72}
+.page-heading:after{content:none}
+.card{box-shadow:var(--shadow);border-radius:14px}
+.kpi{border-top:3px solid #b9dbe9}
+.btn.primary{background:#277ba4;border-color:#277ba4}
+.btn.primary:hover{background:#1b668c;border-color:#1b668c}
+.btn:focus-visible,.nav-btn:focus-visible,.att-tap:focus-visible{outline:3px solid #dfb453;outline-offset:2px}
+.role-pill{background:#eef6fb;color:#205778;border:1px solid #d9e9ef}
+.avatar{background:#e5f2f8;color:#1d648e}
+.school-title{letter-spacing:0}
+.school-mark{box-shadow:0 1px 9px rgba(18,64,90,.10)}
+.room-summary{background:#fafcfe}
+.room-summary span{color:#20638a}
+.banner{background:#edf7fb;border-color:#d3eaf3}
+.login-bg{background:linear-gradient(135deg,#edf7fb,#f7fafb 60%,#fff9eb)}
+.login-panel{border-top:4px solid #cba03f;box-shadow:0 18px 65px #17395618}
+.nav-backdrop{display:none}
+.photo-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(310px,1fr);gap:18px;align-items:start}
+.photo-editor{background:#f8fbfd;border:1px solid #d7e6ed;border-radius:13px;padding:13px;display:grid;gap:10px}
+.photo-editor canvas{display:block;width:100%;max-height:450px;aspect-ratio:4/3;height:auto;background:#f2f5f8;border:3px solid #2b5773;border-radius:5px;touch-action:none;cursor:grab;box-shadow:0 2px 12px #18466513}
+.photo-editor canvas:active{cursor:grabbing}
+.photo-editor .mini{color:#607e91}
+.photo-report input[type=range]{padding:0;height:28px;accent-color:#287fa7}
+.photo-report textarea{resize:vertical;min-height:90px}
+.attendance-tap{display:flex;gap:5px;flex-wrap:wrap;max-width:385px}
+.att-tap{border:1px solid #cbdce5;background:#f8fafb;color:#315d78;padding:8px 10px;min-height:40px;border-radius:9px;font-size:13px;font-weight:700;flex:1;min-width:44px}
+.att-tap:hover{border-color:#6498b1;background:#edf6fa}
+.att-tap.selected{background:#207fa0;color:#fff;border-color:#207fa0}
+.att-tap[data-status="ลา"].selected,.att-tap[data-status="ขาด"].selected{background:#9e5b36;border-color:#9e5b36}
+.att-tap.unmarked.selected{background:#637a8b;border-color:#637a8b}
+.att-tap:disabled{opacity:.6}
+.quick-attendance td{vertical-align:middle}
+#quick-attendance{white-space:nowrap}
+@media(max-width:1070px){.photo-layout{grid-template-columns:1fr}.photo-editor canvas{max-width:700px}}
+@media(max-width:800px){
+ .app-layout{display:block}
+ .nav-backdrop:not([hidden]){display:block;position:fixed;z-index:48;inset:0;background:rgba(7,27,45,.5);border:0;width:100%;padding:0}
+ .sidebar{width:min(84vw,315px)!important;max-height:100dvh;overflow-y:auto;overscroll-behavior:contain;position:fixed;z-index:51;top:0;left:0;bottom:0}
+ .sidebar.open{box-shadow:0 20px 55px #061e2d66}
+ .sidebar .nav-btn,.nav-group summary{min-height:46px}
+ .topbar{min-height:72px;height:auto;padding:12px;align-items:center}
+ .topbar h1{font-size:14px;line-height:1.45}
+ .user-block{gap:5px}
+ .avatar{width:33px;height:33px;flex:0 0 auto}
+ .page{padding:17px 12px 70px}
+ .card{padding:16px}
+ .btn{min-height:43px}
+ .data-table{display:block;width:100%;min-width:0!important}
+ .table-wrap{overflow:visible!important}
+ .data-table thead{display:none}
+ .data-table tbody{display:grid;gap:10px}
+ .data-table tbody tr{display:block;padding:10px;background:white;border:1px solid #dce7ed;border-radius:10px;overflow-wrap:anywhere}
+ .data-table tbody tr td{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;width:100%;border:0!important;border-bottom:1px solid #edf2f5!important;padding:9px 4px!important;white-space:normal}
+ .data-table tbody tr td:last-child{border-bottom:0!important}
+ .data-table tbody tr td::before{content:attr(data-label);flex:0 0 35%;font-size:12px;font-weight:700;color:#667f8b}
+ .data-table tbody tr td .attendance-tap{max-width:100%;flex:1}
+ .quick-attendance tbody tr td:nth-child(4){display:block}
+ .quick-attendance tbody tr td:nth-child(4)::before{display:block;margin-bottom:7px}
+ .quick-attendance .attendance-tap{max-width:none!important}
+ .attendance-table select.att-status{min-width:140px;min-height:44px}
+ .grid3{grid-template-columns:1fr}
+ .filters>input,.filters>select,.filters>button{width:100%;flex:1 0 100%}
+ .photo-layout{grid-template-columns:1fr}
+ .photo-editor{padding:9px}
+ .photo-report .grid2{grid-template-columns:1fr}
+}
+@media(max-width:520px){
+ .role-pill{display:none}
+ .user-block .avatar{display:none}
+ .topbar .sub{display:none}
+ #quick-attendance{padding:7px 9px;font-size:12px}
+ .page-heading h2{font-size:20px}
+ .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .attendance-tap{gap:4px}
+ .att-tap{min-width:0;padding:10px 5px;font-size:12px}
+ .data-table tbody tr td::before{flex-basis:29%}
+}

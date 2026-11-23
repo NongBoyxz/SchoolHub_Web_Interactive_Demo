@@ -4,9 +4,17 @@
 
 ข้อมูลเลขที่จริง **ไม่อยู่ใน Source Code** ต้องนำเข้าไฟล์ `PRIVATE_student_roll_numbers_2569.sql` แยกผ่าน Wrangler หลังสำรอง D1; เก็บไฟล์นี้นอก Repository และอย่า Commit ขึ้น GitHub
 
-# SchoolHub Cloudflare v1.6.3 — โรงเรียนเทพศาลาประชาสรรค์
+# SchoolHub Cloudflare v1.8.0 — โรงเรียนเทพศาลาประชาสรรค์
 
 This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` binding. Do not commit database exports, real student rosters, access tokens, or user passwords.
+
+## เวอร์ชันล่าสุด v1.8.0
+
+- ภาพประกอบกิจกรรมชุมนุมและบำเพ็ญประโยชน์เป็นไฟล์ Word A4 **แยกประเภท**, เลือก/ครอปรูป 4:3 และสร้างเอกสารในเบราว์เซอร์โดยไม่อัปโหลดรูป
+- ระบบเช็กชื่อตามห้องและชุมนุมใหม่ พร้อมสถานะ มา/สาย/ลา/ขาด/ยังไม่ระบุ, สิทธิ์ผู้ใช้และประวัติแยกจากระบบบำเพ็ญประโยชน์เดิม
+- แยกเมนูบำเพ็ญประโยชน์, เพิ่มหมวดเช็กชื่อ 3 ประเภท, ปรับธีมฟ้า–ขาว–ทองและหน้าจอมือถือ
+- **Migration `migrations/0008_classroom_club_attendance.sql` ต้องสำรอง D1 และติดตั้งก่อน Deploy**; ไม่ต้องรัน Migration รุ่นก่อนหรือรีเซ็ตนักเรียนอีก
+- คู่มือ Windows/Ubuntu: `INSTALL_TH_v1.8.md`
 
 ## Changes in 1.6.3
 - Super Admin can use **ลบถาวร** inside **บัญชีที่นำออกแล้ว**.

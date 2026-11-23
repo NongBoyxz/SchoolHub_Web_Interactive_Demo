@@ -208,6 +208,14 @@ async function formsData(db,user,url) {
      ORDER BY CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no LIMIT 2000`).bind(targetId).all();
  }
  const sessions=[];let sessionCount=0;
+ if(kind==='club') {
+   const seen=await db.prepare(`SELECT id,activity_date AS date FROM activity_sessions WHERE kind='club' AND target_id=? AND term=? ORDER BY activity_date ASC LIMIT 200`).bind(targetId,term).all();
+   sessionCount=seen.results.length;
+   for(const day of seen.results.slice(0,20)) {
+     const statuses=await db.prepare(`SELECT student_id,status FROM activity_attendance WHERE session_id=? AND status IS NOT NULL`).bind(day.id).all();
+     sessions.push({date:day.date,marks:statuses.results});
+   }
+ }
  if(kind==='community') {
    const seen=await db.prepare(`SELECT cs.id,cs.activity_date AS date FROM community_sessions cs
      WHERE cs.room_id=? AND cs.term=? ORDER BY cs.activity_date ASC LIMIT 200`).bind(targetId,term).all();
@@ -942,6 +950,76 @@ async function exportClubMembers(db,user,url) {
     'Content-Disposition':'attachment; filename="schoolhub-club-members.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 }
 
+// v1.8: classroom and club attendance are separate from existing community-service attendance.
+// Each mark is checked for teacher scope and current membership inside the D1 transaction.
+async function activityTarget(db,user,kind,targetId){
+ if(!['room','club'].includes(kind))throw error('ประเภทการเช็กชื่อไม่ถูกต้อง');
+ const target=await db.prepare(kind==='room'
+  ?'SELECT id,year,grade,room_no FROM rooms WHERE id=?'
+  :'SELECT id,year,name,active FROM clubs WHERE id=?').bind(targetId).first();
+ if(!target||(kind==='club'&&!target.active))throw error('ไม่พบห้องหรือชุมนุม',404);
+ if(!(kind==='room'?await visibleRoom(db,user,targetId):await visibleClub(db,user,targetId)))
+    throw error('ไม่มีสิทธิ์เช็กชื่อรายการนี้',403,'FORBIDDEN');
+ return target;
+}
+const activitySessionId=(kind,id,date)=>kind+':'+id+'@'+date;
+const attendanceCounts=items=>{const counts={มา:0,สาย:0,ลา:0,ขาด:0,'ยังไม่ระบุ':0};for(const r of items)counts[r.status||'ยังไม่ระบุ']++;return counts;};
+async function activityRoster(db,user,url){
+ const kind=required(url.searchParams.get('kind'),'ประเภทการเช็กชื่อ',20);
+ const targetId=required(url.searchParams.get('id'),'ห้องเรียนหรือชุมนุม',80);
+ const date=dateOnly(url.searchParams.get('date')); const target=await activityTarget(db,user,kind,targetId);
+ const sessionId=activitySessionId(kind,targetId,date),session=await db.prepare('SELECT term,created_at FROM activity_sessions WHERE id=?').bind(sessionId).first();
+ const filter=kind==='room'?'s.room_id=?':'s.club_id=?';
+ const query=`SELECT s.id,s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,s.version AS student_version,
+      r.grade,r.room_no,a.status,COALESCE(a.version,0) AS attendance_version,a.marked_at,u.display_name AS marked_by
+      FROM students s JOIN rooms r ON r.id=s.room_id
+      LEFT JOIN activity_attendance a ON a.session_id=? AND a.student_id=s.id
+      LEFT JOIN users u ON u.id=a.marked_by
+      WHERE ${filter} AND r.year=? AND s.status='active'
+      AND NOT EXISTS(SELECT 1 FROM student_archives ar WHERE ar.student_id=s.id)
+      ORDER BY r.grade,r.room_no,CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no`;
+ const rows=await db.prepare(query).bind(sessionId,targetId,target.year).all();
+ return {kind,target,date,term:session?.term||null,counts:attendanceCounts(rows.results),items:rows.results};
+}
+async function activityDates(db,user,url){
+ const kind=required(url.searchParams.get('kind'),'ประเภท',20),targetId=required(url.searchParams.get('id'),'ห้องหรือชุมนุม',80);
+ await activityTarget(db,user,kind,targetId);
+ const rows=await db.prepare(`SELECT a.activity_date AS date,a.term,COUNT(b.student_id) AS marked
+      FROM activity_sessions a LEFT JOIN activity_attendance b ON b.session_id=a.id AND b.status IS NOT NULL
+      WHERE a.kind=? AND a.target_id=? GROUP BY a.id ORDER BY a.activity_date DESC LIMIT 100`).bind(kind,targetId).all();
+ return {items:rows.results};
+}
+async function activityMark(db,user,request){
+ const p=await body(request),kind=required(p.kind,'ประเภท',20),targetId=required(p.id,'ห้องหรือชุมนุม',80),date=dateOnly(p.date);
+ const target=await activityTarget(db,user,kind,targetId),term=Number(p.term);
+ if(![1,2].includes(term))throw error('เลือกภาคเรียน 1 หรือ 2');
+ const studentId=required(p.student_id,'นักเรียน',80),status=p.status===null||p.status===''?null:cleanString(p.status,12);
+ if(status!==null&&!['มา','สาย','ลา','ขาด'].includes(status))throw error('สถานะไม่ถูกต้อง');
+ const v=Number(p.version);if(!Number.isInteger(v)||v<0)throw error('เวอร์ชันข้อมูลไม่ถูกต้อง');
+ const sid=activitySessionId(kind,targetId,date),now=sqlNow(),scope=kind==='room'?'room_id':'club_id';
+ const old=await db.prepare('SELECT status,version FROM activity_attendance WHERE session_id=? AND student_id=?').bind(sid,studentId).first();
+ if((old?.version||0)!==v)throw error('มีการแก้ไขพร้อมกัน กรุณาโหลดใหม่',409,'STALE');
+ const statements=[
+    db.prepare(`INSERT OR IGNORE INTO activity_sessions(id,kind,target_id,activity_date,term,created_by,created_at) VALUES(?,?,?,?,?,?,?)`)
+      .bind(sid,kind,targetId,date,term,user.id,now),
+    checkGuard(db,`EXISTS(SELECT 1 FROM students s JOIN rooms r ON r.id=s.room_id WHERE s.id=? AND s.${scope}=? AND r.year=?
+       AND s.status='active' AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id))`,[studentId,targetId,target.year]),
+    checkGuard(db,`EXISTS(SELECT 1 FROM activity_sessions WHERE id=? AND term=? AND kind=? AND target_id=?)`,[sid,term,kind,targetId]),
+    checkGuard(db,`COALESCE((SELECT version FROM activity_attendance WHERE session_id=? AND student_id=?),0)=?`,[sid,studentId,v])
+ ];
+ if(!isAdmin(user))statements.push(checkGuard(db,kind==='room'
+  ?`EXISTS(SELECT 1 FROM teacher_rooms x JOIN users u ON u.id=x.user_id WHERE x.user_id=? AND x.room_id=? AND u.active=1)`
+  :`EXISTS(SELECT 1 FROM teacher_clubs x JOIN users u ON u.id=x.user_id WHERE x.user_id=? AND x.club_id=? AND u.active=1)`,[user.id,targetId]));
+ statements.push(db.prepare(`INSERT INTO activity_attendance(session_id,student_id,status,version,marked_by,marked_at)
+   VALUES(?,?,?,1,?,?) ON CONFLICT(session_id,student_id) DO UPDATE SET status=excluded.status,
+    version=activity_attendance.version+1,marked_by=excluded.marked_by,marked_at=excluded.marked_at`).bind(sid,studentId,status,user.id,now));
+ statements.push(db.prepare(`INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at) VALUES(?,?,?,?,?,?)`)
+   .bind(user.id,kind+'_attendance_mark','activity_attendance',sid+':'+studentId,
+   JSON.stringify({kind,target_id:targetId,date,term,student_id:studentId,old_status:old?.status||null,status}),now));
+ statements.push(db.prepare('DELETE FROM excel_import_guard'));
+ try{await db.batch(statements);}catch(e){if(/CHECK constraint failed/i.test(String(e)))throw error('ข้อมูลหรือสิทธิ์เปลี่ยนไปแล้ว กรุณาโหลดใหม่',409,'STALE');throw e;}
+ return {ok:true,version:v+1,status,marked_at:now};
+}
 // Community service attendance is independent from club membership/club attendance.
 // The default unmarked state is NULL; only มา and สาย count as attendance.
 function dateOnly(value) {
@@ -1026,7 +1104,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.7.0'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.8.0'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
@@ -1050,6 +1128,9 @@ export async function onRequest({request,env}) {
     if(route==='club-import/commit') {requireMethod(request.method,'POST');return json(await clubImportCommit(db,user,request));}
     if(route==='club-import/history') {requireMethod(request.method,'GET');return json(await clubImportHistory(db,user));}
     if(route==='export/club-members') {requireMethod(request.method,'GET');return await exportClubMembers(db,user,url);}
+    if(route==='attendance/roster') {requireMethod(request.method,'GET');return json(await activityRoster(db,user,url));}
+    if(route==='attendance/dates') {requireMethod(request.method,'GET');return json(await activityDates(db,user,url));}
+    if(route==='attendance/mark') {requireMethod(request.method,'POST');return json(await activityMark(db,user,request));}
     if(route==='community/attendance') {requireMethod(request.method,'GET');return json(await communityAttendance(db,user,url));}
     if(route==='community/dates') {requireMethod(request.method,'GET');return json(await communityDates(db,user,url));}
     if(route==='community/mark') {requireMethod(request.method,'POST');return json(await communityMark(db,user,request));}

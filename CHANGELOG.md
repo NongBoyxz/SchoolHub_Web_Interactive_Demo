@@ -55,3 +55,14 @@
 ## Security notes
 
 Authenticated form-data endpoints enforce homeroom / adviser scope server-side. Files are created in the browser; the XLSX source is a blank official form and contains no student records. ZIPs from the application may contain students' private information: store and share accordingly.
+
+## v1.8.0 — ภาพประกอบกิจกรรม / เช็กชื่อ 3 ประเภท / ฟ้า–ขาว–ทอง / มือถือ
+
+- เพิ่มแบบฟอร์ม Word A4 ภาพประกอบชุมนุมและบำเพ็ญประโยชน์ **แยกไฟล์**; อ้างอิงหัวข้อและกรอบภาพสี่เหลี่ยมจากเอกสารต้นฉบับ `.doc`, อัปโหลดและครอปรูปอัตราส่วน 4:3 ก่อนสร้าง `.docx` ในเบราว์เซอร์ (ไม่มีข้อมูลรูปส่งเข้า D1 หรือ CDN)
+- เพิ่ม Migration **0008** เพื่อเช็กชื่อตามห้องและเช็กชื่อชุมนุม โดยรักษาการเช็กชื่อบำเพ็ญประโยชน์ไว้คนละชุดตาราง
+- ตรวจสิทธิ์ผู้ใช้ใน API และบันทึกประวัติ; optimistic concurrency ไม่เขียนทับงานครูคนอื่น
+- เพิ่มเช็กชื่อชุมนุมจาก D1 เป็นแหล่งข้อมูลสำหรับแบบฟอร์มเวลาเรียนชุมนุม
+- แยกหมวดบำเพ็ญประโยชน์ออกมาเป็นเมนูหลัก และเพิ่มหมวดเช็กชื่อพร้อมเมนูย่อย 3 ประเภท
+- ธีมฟ้า–ขาว–ทองแบบเรียบ, เมนูมือถือแบบ overlay, สถานะแบบแตะง่าย, ตารางแบบการ์ดบนจอเล็ก
+- ปรับคำสั่ง `npm run check` ให้ใช้ได้ทั้ง Windows PowerShell และ Ubuntu
+- ไม่มีการลบหรือแก้เลขประจำตัวนักเรียนเดิมใน Migration และไม่มีทะเบียนจริงใน Source Code

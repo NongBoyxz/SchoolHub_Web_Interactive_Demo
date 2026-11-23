@@ -1,8 +1,9 @@
 import {readSchoolImport,readSchoolClubImport} from './xlsx-reader.js';
 import {buildActivityForms} from './form-xlsx.js';
-// SchoolHub Live v1.7.0 — role-scoped teacher Excel import; no student data in static assets.
+import {mountPhotoReport} from './photo-report.js';
+// SchoolHub Live v1.8.0 — role-scoped teacher Excel import; no student data in static assets.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
-const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,roomBreakdown:[],formOptions:null,studentTotal:0,audit:[],removalHistory:{items:[],total:0,page:1,page_size:50},removalHistoryPage:1,archived:[],importHistory:[],importDraft:null,clubImportDraft:null,clubImportHistory:[],allowedClubs:[],community:{room_id:'',date:'',term:1,items:[],dates:[]},page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
+const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,roomBreakdown:[],formOptions:null,studentTotal:0,audit:[],removalHistory:{items:[],total:0,page:1,page_size:50},removalHistoryPage:1,archived:[],importHistory:[],importDraft:null,clubImportDraft:null,clubImportHistory:[],allowedClubs:[],community:{room_id:'',date:'',term:1,items:[],dates:[]},attendance:{room:{id:'',date:'',term:1},club:{id:'',date:'',term:1}},page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const allAdmin=()=>['super_admin','admin'].includes(state.user?.role);
 const canUseImport=()=>allAdmin()||(state.user?.role==='teacher'&&Number(state.user.can_import_excel)===1);
@@ -72,21 +73,29 @@ function navItem(key,emoji,label){return `<button class="nav-btn ${state.tab===k
 function shell(content){
  const groups=[
   {label:'📚 นักเรียนและห้องเรียน',keys:['students','rooms',...(canUseImport()?['import']:[]),...(allAdmin()?['archived']:[])]},
-  {label:'🎯 ชุมนุม',keys:['clubs',...(canClubImport()?['club-import']:[])]},
-  {label:'🤝 กิจกรรมและเอกสาร',keys:['community','forms','export']},
+  {label:'🎯 ชุมนุม',keys:['clubs',...(canClubImport()?['club-import']:[]),'photo-club']},
+  {label:'🤝 บำเพ็ญประโยชน์',keys:['community','photo-community']},
+  {label:'✅ เช็กชื่อ',keys:['attendance-room','attendance-club','community-attendance']},
+  {label:'📋 แบบฟอร์มและรายงาน',keys:['forms','export']},
   ...(allAdmin()?[{label:'⚙️ ตั้งค่าระบบ',keys:['users','audit']}]:[])
  ];
- const tabs={students:['👥','รายชื่อนักเรียน'],rooms:['🏫','ห้องเรียน'],import:['📥','นำเข้านักเรียน'],archived:['🗂️','นักเรียนที่นำออก'],clubs:['🎯','รายชื่อชุมนุม'],'club-import':['🗃️','นำเข้าสมาชิก'],community:['🤝','บำเพ็ญประโยชน์'],forms:['📋','แบบฟอร์มกิจกรรม'],export:['📥','ส่งออกรายงาน'],users:['🔐','บัญชีและสิทธิ์'],audit:['🕘','ประวัติการแก้ไข']};
+ const tabs={students:['👥','รายชื่อนักเรียน'],rooms:['🏫','ห้องเรียน'],import:['📥','นำเข้านักเรียน'],archived:['🗂️','นักเรียนที่นำออก'],clubs:['🎯','รายชื่อชุมนุม'],
+ 'club-import':['🗃️','นำเข้าสมาชิก'],community:['🤝','เช็กชื่อบำเพ็ญ'],forms:['📋','แบบฟอร์มเวลาเรียน'],export:['📥','ส่งออกรายงาน'],users:['🔐','บัญชีและสิทธิ์'],audit:['🕘','ประวัติการแก้ไข'],
+ 'photo-club':['🖼️','ภาพประกอบชุมนุม'],'photo-community':['🖼️','ภาพประกอบบำเพ็ญ'],'attendance-room':['🏫','เช็กชื่อตามห้อง'],'attendance-club':['🎯','เช็กชื่อชุมนุม'],'community-attendance':['🤝','เช็กชื่อบำเพ็ญประโยชน์']};
  const nav=navItem('dashboard','▦','ภาพรวม')+groups.map(group=>`<details class="nav-group" ${group.keys.includes(state.tab)?'open':''}><summary>${esc(group.label)}</summary><div class="nav-children">${group.keys.map(key=>navItem(key,...tabs[key])).join('')}</div></details>`).join('');
- root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.7.0</small></span></div></div>
+ root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.8.0</small></span></div></div>
  <nav class="nav" aria-label="เมนูหลัก">${nav}</nav>
  <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button><p class="mini" style="color:#a4c0df;margin-top:18px">เว็บจำลองเดิม <a style="color:white" href="/">เปิดที่นี่</a></p></div></aside>
- <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
- <main class="page">${content}<p class="footer-note">SchoolHub v1.7 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
- root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;loadTab();});
+ <button class="nav-backdrop" id="nav-backdrop" aria-label="ปิดเมนู" hidden></button>
+ <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><button id="quick-attendance" class="btn" type="button">✅ เช็กชื่อ</button><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
+ <main class="page">${content}<p class="footer-note">SchoolHub v1.8 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
+ root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;root.querySelector('#sidebar').classList.remove('open');loadTab();});
+ root.querySelector('#quick-attendance').onclick=()=>{state.tab=state.rooms.length?'attendance-room':state.clubs.length?'attendance-club':'community-attendance';loadTab();};
  root.querySelector('#change-password').onclick=()=>passwordDialog();
  root.querySelector('#logout').onclick=async()=>{try{await post('auth/logout',{});}catch{}state.user=null;renderLogin();};
- root.querySelector('#menu-toggle').onclick=()=>root.querySelector('#sidebar').classList.toggle('open');
+ root.querySelector('#menu-toggle').onclick=()=>{const open=root.querySelector('#sidebar').classList.toggle('open');root.querySelector('#nav-backdrop').hidden=!open;root.querySelector('#menu-toggle').setAttribute('aria-expanded',String(open));};
+ root.querySelector('#nav-backdrop').onclick=()=>{root.querySelector('#sidebar').classList.remove('open');root.querySelector('#nav-backdrop').hidden=true;};
+ root.querySelectorAll('.table-wrap table').forEach(table=>{const heads=[...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());table.querySelectorAll('tbody tr').forEach(tr=>[...tr.children].forEach((td,i)=>{if(td.tagName==='TD'&&!td.hasAttribute('data-label'))td.setAttribute('data-label',heads[i]||'');}));});
 }
 const title=(heading,sub,actions='')=>`<div class="page-heading"><div><h2>${heading}</h2><p class="sub">${sub}</p></div><div class="actions">${actions}</div></div>`;
 const table=(headers,rows)=>`<div class="card" style="padding:0"><div class="table-wrap"><table class="data-table"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${headers.length}" class="empty">ยังไม่มีรายการ</td></tr>`}</tbody></table></div></div>`;
@@ -607,10 +616,61 @@ async function showCommunity(){
  };
 }
 
+// Dedicated room and club attendance, backed by D1 and guarded by teacher assignments.
+async function showActivityAttendance(kind){
+ const config=state.attendance[kind],targets=kind==='room'?state.rooms:state.clubs.filter(c=>c.active),label=kind==='room'?'ห้องเรียน':'ชุมนุม';
+ if(!targets.length){shell(`${title('เช็กชื่อ'+label,'ยังไม่ได้รับมอบหมาย'+label)}<section class="card"><p>ไม่มี${label}ในขอบเขตสิทธิ์ของบัญชีนี้ กรุณาให้ผู้ดูแลมอบหมายก่อน</p></section>`);return;}
+ if(!targets.some(t=>t.id===config.id))config.id=targets[0].id;
+ if(!config.date)config.date=thailandDate();
+ const params=new URLSearchParams({kind,id:config.id,date:config.date});
+ const [data,history]=await Promise.all([api('attendance/roster?'+params),api('attendance/dates?kind='+kind+'&id='+encodeURIComponent(config.id))]);
+ if(data.term)config.term=Number(data.term);
+ const personName=s=>`${s.prefix||''} ${s.first_name||''} ${s.last_name||''}`.trim();
+ const counts=()=>Object.entries(data.counts).map(([k,v])=>`<span class="tag ${['ขาด','ลา'].includes(k)?'warning':''}">${esc(k)} ${v}</span>`).join('');
+ const statuses=['มา','สาย','ลา','ขาด'];
+ const rows=data.items.map(s=>`<tr data-person="${esc(s.id)}"><td>${s.roll_no??'—'}</td><td>${esc(s.student_no)}</td><td>${esc(personName(s))}<div class="mini sub">${kind==='club'?`ม.${s.grade}/${s.room_no}`:''}</div></td>
+ <td><div class="attendance-tap" role="group" aria-label="เช็กชื่อ ${esc(personName(s))}">
+ ${statuses.map(st=>`<button type="button" class="att-tap ${s.status===st?'selected':''}" data-status="${st}" aria-pressed="${s.status===st}">${st}</button>`).join('')}
+ <button type="button" class="att-tap unmarked ${!s.status?'selected':''}" data-status="" aria-pressed="${!s.status}">—</button></div></td>
+ <td class="mini">${esc(s.marked_by||'—')}</td></tr>`).join('');
+ shell(`${title('เช็กชื่อ'+label,'เลือกวันและภาคเรียน • มา/สาย = มาเรียน • ลา/ขาด = ไม่เข้าเรียน • ยังไม่ระบุไม่ถือว่าขาด')}
+ <section class="card stack"><div class="grid3">
+ <label class="field"><span>${label}</span><select id="attendance-target">${targets.map(t=>`<option value="${esc(t.id)}" ${config.id===t.id?'selected':''}>${esc(kind==='room'?`ม.${t.grade}/${t.room_no}`:t.name)}</option>`).join('')}</select></label>
+ <label class="field"><span>วันที่กิจกรรม</span><input id="attendance-date" type="date" value="${esc(config.date)}"></label>
+ <label class="field"><span>ภาคเรียน</span><select id="attendance-term" ${data.term?'disabled':''}><option value="1" ${config.term===1?'selected':''}>1</option><option value="2" ${config.term===2?'selected':''}>2</option></select></label></div>
+ <div class="actions"><button id="attendance-open" class="btn primary">เปิดรายชื่อ</button><span class="tag neutral">นักเรียน ${data.items.length} คน</span></div>
+ <div class="row" id="attendance-counts"><strong>สถานะ:</strong>${counts()}</div><p class="sub">แตะสถานะของนักเรียนแต่ละคนเพื่อบันทึกลง D1 ทันที · “—” = ยังไม่ระบุ</p>
+ <div class="table-wrap"><table class="data-table attendance-table quick-attendance"><thead><tr><th>เลขที่</th><th>เลขประจำตัว</th><th>ชื่อ-นามสกุล</th><th>สถานะ</th><th>ผู้บันทึก</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+ <section class="card stack section"><h3>วันที่เคยเช็กชื่อ</h3><div class="attendance-day-chips">${history.items.length?history.items.map(x=>`<button class="btn small" data-att-date="${esc(x.date)}">${esc(x.date)} • ภาค ${x.term} • ${x.marked} คน</button>`).join(''):'ยังไม่มีประวัติ'}</div></section>`);
+ const $=id=>root.querySelector('#'+id);
+ $('attendance-open').onclick=async()=>{config.id=$('attendance-target').value;config.date=$('attendance-date').value;config.term=Number($('attendance-term').value);await loadTab(true);};
+ root.querySelectorAll('[data-att-date]').forEach(b=>b.onclick=async()=>{config.date=b.dataset.attDate;await loadTab(true);});
+ root.querySelectorAll('[data-person]').forEach(row=>{
+   const person=data.items.find(s=>s.id===row.dataset.person);if(!person)return;
+   row.querySelectorAll('.att-tap').forEach(button=>button.onclick=async()=>{
+     if(row.dataset.busy==='1')return;
+     row.dataset.busy='1';row.querySelectorAll('.att-tap').forEach(x=>x.disabled=true);
+     const status=button.dataset.status||null;
+     try{
+      const result=await post('attendance/mark',{kind,id:config.id,date:config.date,term:config.term,student_id:person.id,status,version:person.attendance_version});
+      data.counts[person.status||'ยังไม่ระบุ']--;person.status=status;person.attendance_version=result.version;
+      data.counts[status||'ยังไม่ระบุ']++;$('attendance-counts').innerHTML='<strong>สถานะ:</strong>'+counts();
+      row.querySelectorAll('.att-tap').forEach(b=>{const yes=(b.dataset.status||null)===status;b.classList.toggle('selected',yes);b.setAttribute('aria-pressed',String(yes));});
+     }catch(e){notify(e.message);await loadTab(true);return;}finally{row.dataset.busy='0';row.querySelectorAll('.att-tap').forEach(x=>x.disabled=false);}
+   });
+ });
+}
+async function showPhotoDocument(kind){
+ const options=await api('forms/options');
+ shell(`${title('ภาพประกอบการจัดกิจกรรม '+(kind==='club'?'ชุมนุม':'บำเพ็ญประโยชน์'),'อัปโหลดภาพ ครอปให้พอดีกับกรอบ และดาวน์โหลด Word แยกตามประเภท')}
+ <div id="photo-report-host"></div>`);
+ mountPhotoReport(root.querySelector('#photo-report-host'),{kind,options});
+}
+
 function renderForms(){
  const options=state.formOptions||{rooms:[],clubs:[]};
  shell(`${title('แบบฟอร์มกิจกรรม','ใช้รูปแบบจากตารางเช็คเวลาเรียน 2.69.xlsx • สร้างไฟล์ Excel ในเบราว์เซอร์')}
- <section class="card stack"><div class="banner mini"><strong>ดาวน์โหลดแยกประเภท:</strong> ชุมนุมมีเฉพาะ 2 แผ่นงานของชุมนุม • บำเพ็ญประโยชน์มีเฉพาะ 2 แผ่นงานของบำเพ็ญประโยชน์ • ไม่รวมแผ่นงานของอีกกิจกรรม</div><div class="warning-box mini">ฟอร์มเปล่าจะไม่ใส่รายชื่อหรือผลเช็กชื่อ • ฟอร์มเติมข้อมูลใช้ทะเบียนตามสิทธิ์บัญชี • ผลเช็กชื่ออัตโนมัติใช้เฉพาะบำเพ็ญประโยชน์ที่บันทึกไว้ใน D1 (ระบบเช็กชื่อชุมนุมยังไม่ได้เปิดใช้งาน)</div>
+ <section class="card stack"><div class="banner mini"><strong>ดาวน์โหลดแยกประเภท:</strong> ชุมนุมมีเฉพาะ 2 แผ่นงานของชุมนุม • บำเพ็ญประโยชน์มีเฉพาะ 2 แผ่นงานของบำเพ็ญประโยชน์ • ไม่รวมแผ่นงานของอีกกิจกรรม</div><div class="warning-box mini">ฟอร์มเปล่าจะไม่ใส่รายชื่อหรือผลเช็กชื่อ • ฟอร์มเติมข้อมูลใช้ทะเบียนตามสิทธิ์บัญชี • เติมผลเช็กชื่ออัตโนมัติจาก D1 สำหรับชุมนุมและบำเพ็ญประโยชน์</div>
  <div class="grid2">
  <label class="field"><span>ประเภทกิจกรรม</span><select id="form-kind"><option value="club">ชุมนุม</option><option value="community">บำเพ็ญประโยชน์</option><option value="other">กิจกรรมอื่น ๆ (ใช้รายชื่อห้องเรียน)</option></select></label>
  <label class="field"><span>ห้องเรียน / ชุมนุม</span><select id="form-target"></select></label>
@@ -654,7 +714,11 @@ async function loadTab(reload=false){if(!state.user)return;
     case 'dashboard':{const [summary,breakdown]=await Promise.all([api('dashboard'),api('dashboard/rooms')]);state.dashboard=summary;state.roomBreakdown=breakdown.items;renderDashboard();break;}
     case 'archived':{if(!allAdmin()){state.tab='dashboard';return loadTab();}const params=new URLSearchParams({page:String(state.page),q:state.query});state.archived=(await api('students/archived?'+params)).items;renderArchived();break;}
     case 'club-import':{if(!canClubImport()){state.tab='dashboard';return loadTab();}const [allowed,hist]=await Promise.all([api('club-import/allowed'),api('club-import/history')]);state.allowedClubs=allowed.items;state.clubImportHistory=hist.items;renderClubImport();break;}
-    case 'community':await showCommunity();break;
+    case 'community':case 'community-attendance':await showCommunity();break;
+    case 'attendance-room':await showActivityAttendance('room');break;
+    case 'attendance-club':await showActivityAttendance('club');break;
+    case 'photo-club':await showPhotoDocument('club');break;
+    case 'photo-community':await showPhotoDocument('community');break;
     case 'forms':state.formOptions=await api('forms/options');renderForms();break;
     case 'import':{if(!canUseImport()){state.tab='dashboard';return loadTab();}state.importHistory=(await api('import/history')).items;renderImport();break;}
     case 'students':{const params=new URLSearchParams({page:String(state.page),q:state.query,room_id:state.roomFilter,club_id:state.clubFilter});const result=await api('students?'+params);state.students=result.items;state.studentTotal=Number(result.total||0);renderStudents();break;}
