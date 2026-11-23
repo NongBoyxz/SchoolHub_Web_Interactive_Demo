@@ -1,7 +1,7 @@
-import {readSchoolImport,readSchoolClubImport} from './xlsx-reader.js';
-import {buildActivityForms} from './form-xlsx.js';
-import {mountPhotoReport} from './photo-report.js';
-// SchoolHub Live v1.8.0 — role-scoped teacher Excel import; no student data in static assets.
+import {readSchoolImport,readSchoolClubImport} from './xlsx-reader.js?v=1.8.1';
+import {buildActivityForms} from './form-xlsx.js?v=1.8.1';
+import {mountPhotoReport} from './photo-report.js?v=1.8.1';
+// SchoolHub Live v1.8.1 — role-scoped teacher Excel import; no student data in static assets.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
 const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,roomBreakdown:[],formOptions:null,studentTotal:0,audit:[],removalHistory:{items:[],total:0,page:1,page_size:50},removalHistoryPage:1,archived:[],importHistory:[],importDraft:null,clubImportDraft:null,clubImportHistory:[],allowedClubs:[],community:{room_id:'',date:'',term:1,items:[],dates:[]},attendance:{room:{id:'',date:'',term:1},club:{id:'',date:'',term:1}},page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -57,7 +57,7 @@ function renderLogin(setup=false,loadError=''){
      <button class="btn primary" style="width:100%;margin-top:9px" type="submit">${setup?'สร้างบัญชี Super Admin':'เข้าสู่ระบบ'} →</button>
      <div class="auth-error" id="auth-error">${esc(loadError)}</div>
    </form><p class="login-footer">ระบบข้อมูลจริง • ห้ามใช้บัญชีร่วมกัน • ข้อมูลนักเรียนไม่อยู่ใน HTML</p>
-   <p class="login-footer" style="margin-top:7px"><a href="/">กลับไปยังเว็บจำลองเดิม</a></p>
+  
  </main></div>`;
  const f=document.querySelector('#login-form');f.onsubmit=async e=>{e.preventDefault();const d=getForm(f), btn=f.querySelector('button');btn.disabled=true;
    try {if(setup){await post('setup',{setupToken:d.setupToken,display_name:d.display_name,username:d.username,password:d.password});notify('สร้าง Super Admin แล้ว กรุณาเข้าสู่ระบบ');renderLogin();}
@@ -74,21 +74,21 @@ function shell(content){
  const groups=[
   {label:'📚 นักเรียนและห้องเรียน',keys:['students','rooms',...(canUseImport()?['import']:[]),...(allAdmin()?['archived']:[])]},
   {label:'🎯 ชุมนุม',keys:['clubs',...(canClubImport()?['club-import']:[]),'photo-club']},
-  {label:'🤝 บำเพ็ญประโยชน์',keys:['community','photo-community']},
+  {label:'🤝 บำเพ็ญประโยชน์',keys:['photo-community']},
   {label:'✅ เช็กชื่อ',keys:['attendance-room','attendance-club','community-attendance']},
   {label:'📋 แบบฟอร์มและรายงาน',keys:['forms','export']},
   ...(allAdmin()?[{label:'⚙️ ตั้งค่าระบบ',keys:['users','audit']}]:[])
  ];
  const tabs={students:['👥','รายชื่อนักเรียน'],rooms:['🏫','ห้องเรียน'],import:['📥','นำเข้านักเรียน'],archived:['🗂️','นักเรียนที่นำออก'],clubs:['🎯','รายชื่อชุมนุม'],
- 'club-import':['🗃️','นำเข้าสมาชิก'],community:['🤝','เช็กชื่อบำเพ็ญ'],forms:['📋','แบบฟอร์มเวลาเรียน'],export:['📥','ส่งออกรายงาน'],users:['🔐','บัญชีและสิทธิ์'],audit:['🕘','ประวัติการแก้ไข'],
+ 'club-import':['🗃️','นำเข้าสมาชิก'],forms:['📋','แบบฟอร์มเวลาเรียน'],export:['📥','ส่งออกรายงาน'],users:['🔐','บัญชีและสิทธิ์'],audit:['🕘','ประวัติการแก้ไข'],
  'photo-club':['🖼️','ภาพประกอบชุมนุม'],'photo-community':['🖼️','ภาพประกอบบำเพ็ญ'],'attendance-room':['🏫','เช็กชื่อตามห้อง'],'attendance-club':['🎯','เช็กชื่อชุมนุม'],'community-attendance':['🤝','เช็กชื่อบำเพ็ญประโยชน์']};
  const nav=navItem('dashboard','▦','ภาพรวม')+groups.map(group=>`<details class="nav-group" ${group.keys.includes(state.tab)?'open':''}><summary>${esc(group.label)}</summary><div class="nav-children">${group.keys.map(key=>navItem(key,...tabs[key])).join('')}</div></details>`).join('');
- root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.8.0</small></span></div></div>
+ root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.8.1</small></span></div></div>
  <nav class="nav" aria-label="เมนูหลัก">${nav}</nav>
- <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button><p class="mini" style="color:#a4c0df;margin-top:18px">เว็บจำลองเดิม <a style="color:white" href="/">เปิดที่นี่</a></p></div></aside>
+ <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button></div></aside>
  <button class="nav-backdrop" id="nav-backdrop" aria-label="ปิดเมนู" hidden></button>
  <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><button id="quick-attendance" class="btn" type="button">✅ เช็กชื่อ</button><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
- <main class="page">${content}<p class="footer-note">SchoolHub v1.8 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
+ <main class="page">${content}<p class="footer-note">SchoolHub v1.8.1 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
  root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;root.querySelector('#sidebar').classList.remove('open');loadTab();});
  root.querySelector('#quick-attendance').onclick=()=>{state.tab=state.rooms.length?'attendance-room':state.clubs.length?'attendance-club':'community-attendance';loadTab();};
  root.querySelector('#change-password').onclick=()=>passwordDialog();
@@ -220,7 +220,7 @@ function renderClubs(){const rows=state.clubs.map(c=>`<tr><td><strong>${esc(c.na
 function clubDialog(club){const editing=!!club;
  const fields=`${htmlField('name','ชื่อชุมนุม',club?.name||'')}
  <div class="grid2">${htmlField('year','ปีการศึกษา',club?.year||2569,{type:'number',min:2500})}${htmlField('capacity','จำนวนสูงสุด (ว่าง = ไม่จำกัด)',club?.capacity||'',{type:'number',required:false,min:1})}</div>
- ${editing?`<label class="row"><input name="active" type="checkbox" style="width:auto;min-height:0" ${club.active?'checked':''}/> เปิดใช้งานชุมนุม</label>`:''}`;
+ ${editing?`<label class="checkbox-inline club-active-toggle"><input name="active" type="checkbox" ${club.active?'checked':''}/><span>เปิดใช้งานชุมนุม</span></label>`:''}`;
  showModal(editing?'แก้ไขชุมนุม':'เพิ่มชุมนุมใหม่',fields,async(p,form)=>{
   const value={name:p.name,year:Number(p.year),capacity:p.capacity?Number(p.capacity):null};
   if(editing){value.active=!!form.querySelector('[name=active]:checked');await patch('clubs/'+club.id,value);}
@@ -575,90 +575,108 @@ function renderClubImportPreview(plan){
  };
 }
 const thailandDate=()=>new Date(Date.now()+7*3600000).toISOString().slice(0,10);
-async function showCommunity(){
- const cm=state.community;
- if(!state.rooms.length){shell(`${title('กิจกรรมบำเพ็ญประโยชน์','เช็กชื่อรายวันแยกจากกิจกรรมชุมนุม')}<div class="card warning-box">ยังไม่มีห้องเรียนที่ได้รับมอบหมาย</div>`);return;}
- if(!state.rooms.some(x=>x.id===cm.room_id))cm.room_id=state.rooms[0].id;
- if(!cm.date)cm.date=thailandDate();
- const params=new URLSearchParams({room_id:cm.room_id,date:cm.date}),[data,history]=await Promise.all([
-    api('community/attendance?'+params),api('community/dates?room_id='+encodeURIComponent(cm.room_id))]);
- cm.items=data.items;cm.dates=history.items;if(data.term)cm.term=data.term;
- const entries=Object.entries(data.counts).map(([key,n])=>`<span class="tag ${key==='ขาด'||key==='ลา'?'warning':''}">${esc(key)} ${n}</span>`).join(' ');
- const rows=data.items.map(s=>`<tr data-person="${esc(s.id)}"><td>${s.roll_no??'—'}</td><td>${esc(s.student_no)}</td><td>${esc(`${s.prefix} ${s.first_name} ${s.last_name}`.trim())}</td>
- <td><select class="att-status" data-id="${esc(s.id)}" data-version="${s.attendance_version}" aria-label="เช็กชื่อ ${esc(s.first_name)}"><option value="" ${s.status===null?'selected':''}>ยังไม่ระบุ</option>${['มา','สาย','ลา','ขาด'].map(status=>`<option value="${status}" ${s.status===status?'selected':''}>${status}</option>`).join('')}</select></td>
- <td class="mini">${esc(s.marked_by||'—')}${s.marked_at?' • '+esc(new Date(s.marked_at).toLocaleString('th-TH')):''}</td></tr>`).join('');
- shell(`${title('กิจกรรมบำเพ็ญประโยชน์','ครูประจำชั้นทั้งสองคนเช็กชื่อได้ • แยกแต่ละวัน • มา/สาย = เข้าเรียน • ลา/ขาด = ไม่เข้าเรียน')}
- <section class="card stack"><div class="grid3"><label class="field"><span>ห้องเรียน</span><select id="community-room">${state.rooms.map(r=>`<option value="${esc(r.id)}" ${r.id===cm.room_id?'selected':''}>ม.${r.grade}/${r.room_no}</option>`).join('')}</select></label>
- <label class="field"><span>วันที่กิจกรรม</span><input type="date" id="community-date" value="${esc(cm.date)}"/></label>
- <label class="field"><span>ภาคเรียน (กำหนดเมื่อเช็กชื่อครั้งแรกของวันนี้)</span><select id="community-term" ${data.term?'disabled':''}><option value="1" ${cm.term===1?'selected':''}>ภาคเรียน 1</option><option value="2" ${cm.term===2?'selected':''}>ภาคเรียน 2</option></select></label></div>
- <div class="actions"><button class="btn primary" id="community-load">เปิดรายชื่อวันที่เลือก</button><button class="btn" id="community-csv">⬇ ส่งออก CSV วันที่เลือก</button></div>
- <div class="row"><strong>สรุปสถานะ:</strong>${entries}</div><p class="sub">ยังไม่ระบุ = ยังไม่เช็กชื่อ (ไม่นับเป็นขาด) • เปลี่ยนสถานะแล้วบันทึกทันทีลง D1 • หากมีการแก้ไขพร้อมกันจะให้โหลดใหม่</p>
- <div class="table-wrap"><table class="data-table attendance-table"><thead><tr><th>เลขที่</th><th>เลขประจำตัว</th><th>ชื่อ-นามสกุล</th><th>สถานะ</th><th>เช็กล่าสุดโดย</th></tr></thead><tbody>${rows}</tbody></table></div></section>
- <section class="card stack section"><h3>วันที่เคยเช็กชื่อ (100 วันล่าสุด)</h3><div class="attendance-day-chips">${history.items.length?history.items.map(x=>`<button class="btn small" data-cm-date="${esc(x.date)}">${esc(x.date)} • ภาค ${x.term} • ${x.marked} คน</button>`).join(''):'ยังไม่มีวันที่บันทึก'}</div></section>`);
- const $=name=>root.querySelector('#'+name);
- $('community-load').onclick=async()=>{
-  cm.room_id=$('community-room').value;cm.date=$('community-date').value;cm.term=Number($('community-term').value);
-  await loadTab(true);
- };
- $('community-date').onchange=()=>{};
- root.querySelectorAll('[data-cm-date]').forEach(b=>b.onclick=async()=>{cm.date=b.dataset.cmDate;await loadTab(true);});
- root.querySelectorAll('.att-status').forEach(select=>select.onchange=async()=>{
-  const status=select.value||null,v=Number(select.dataset.version);select.disabled=true;
-  try{await post('community/mark',{room_id:cm.room_id,date:cm.date,term:cm.term,student_id:select.dataset.id,status,version:v});await loadTab(true);}
-  catch(e){notify(e.message);await loadTab(true);}
- });
- $('community-csv').onclick=()=>{
-  const protect=v=>{const st=String(v??'');return /^[\s]*[=+\-@\t\r]/.test(st)?`'${st}`:st;};
-  const cell=v=>`"${protect(v).replaceAll('"','""')}"`;
-  const csv=[['วันที่','ห้อง','เลขที่','เลขประจำตัว','คำนำหน้า','ชื่อ','นามสกุล','สถานะ','ผู้บันทึก'].map(cell).join(',')];
-  for(const s of data.items)csv.push([cm.date,roomName(cm.room_id),s.roll_no??'',s.student_no,s.prefix,s.first_name,s.last_name,s.status||'ยังไม่ระบุ',s.marked_by||''].map(cell).join(','));
-  const url=URL.createObjectURL(new Blob(['\uFEFF'+csv.join('\r\n')],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`SchoolHub_Community_${cm.room_id}_${cm.date}.csv`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
- };
+const attendanceStates=['มา','สาย','ลา','ขาด'];
+const attendanceLabel={room:'ห้องเรียน',club:'ชุมนุม',community:'บำเพ็ญประโยชน์'};
+const displayStudentName=s=>[s.prefix,s.first_name,s.last_name].filter(Boolean).join(' ').trim();
+function attendancePills(person){
+ return `<div class="attendance-tap" role="group" aria-label="เช็กชื่อ ${esc(displayStudentName(person))}">
+ ${attendanceStates.map(status=>`<button type="button" class="att-tap ${person.status===status?'selected':''}" data-status="${status}" aria-pressed="${person.status===status}">${status}</button>`).join('')}
+ <button type="button" class="att-tap unmarked ${!person.status?'selected':''}" data-status="" aria-label="ยังไม่ระบุ" aria-pressed="${!person.status}">—</button></div>`;
 }
-
-// Dedicated room and club attendance, backed by D1 and guarded by teacher assignments.
-async function showActivityAttendance(kind){
- const config=state.attendance[kind],targets=kind==='room'?state.rooms:state.clubs.filter(c=>c.active),label=kind==='room'?'ห้องเรียน':'ชุมนุม';
- if(!targets.length){shell(`${title('เช็กชื่อ'+label,'ยังไม่ได้รับมอบหมาย'+label)}<section class="card"><p>ไม่มี${label}ในขอบเขตสิทธิ์ของบัญชีนี้ กรุณาให้ผู้ดูแลมอบหมายก่อน</p></section>`);return;}
- if(!targets.some(t=>t.id===config.id))config.id=targets[0].id;
+function attendanceSummary(counts){
+ return Object.entries(counts).map(([name,total])=>`<span class="tag ${['ลา','ขาด'].includes(name)?'warning':'neutral'}">${esc(name)} ${Number(total)}</span>`).join('');
+}
+async function showCommunity(){return showUnifiedAttendance('community');}
+async function showActivityAttendance(kind){return showUnifiedAttendance(kind);}
+async function showUnifiedAttendance(kind){
+ if(!['room','club','community'].includes(kind))throw Error('ประเภทการเช็กชื่อไม่ถูกต้อง');
+ const community=kind==='community';
+ const config=community?state.community:state.attendance[kind];
+ const targets=kind==='club'?state.clubs.filter(c=>c.active):state.rooms;
+ const label=attendanceLabel[kind];
+ if(!targets.length){shell(`${title('เช็กชื่อ'+label,'ไม่มีรายชื่อในขอบเขตที่ได้รับมอบหมาย')}<section class="card"><p>ยังไม่มี${kind==='club'?'ชุมนุม':'ห้องเรียน'}ที่ได้รับมอบหมาย กรุณาให้ผู้ดูแลตรวจสิทธิ์ของบัญชี</p></section>`);return;}
+ const previous=community?config.room_id:config.id;
+ const selected=targets.some(t=>t.id===previous)?previous:targets[0].id;
+ if(community)config.room_id=selected;else config.id=selected;
  if(!config.date)config.date=thailandDate();
- const params=new URLSearchParams({kind,id:config.id,date:config.date});
- const [data,history]=await Promise.all([api('attendance/roster?'+params),api('attendance/dates?kind='+kind+'&id='+encodeURIComponent(config.id))]);
+ const params=new URLSearchParams(community?{room_id:selected,date:config.date}:{kind,id:selected,date:config.date});
+ const days=community?'community/dates?room_id='+encodeURIComponent(selected):'attendance/dates?kind='+kind+'&id='+encodeURIComponent(selected);
+ const [data,history]=await Promise.all([api((community?'community/attendance?':'attendance/roster?')+params),api(days)]);
  if(data.term)config.term=Number(data.term);
- const personName=s=>`${s.prefix||''} ${s.first_name||''} ${s.last_name||''}`.trim();
- const counts=()=>Object.entries(data.counts).map(([k,v])=>`<span class="tag ${['ขาด','ลา'].includes(k)?'warning':''}">${esc(k)} ${v}</span>`).join('');
- const statuses=['มา','สาย','ลา','ขาด'];
- const rows=data.items.map(s=>`<tr data-person="${esc(s.id)}"><td>${s.roll_no??'—'}</td><td>${esc(s.student_no)}</td><td>${esc(personName(s))}<div class="mini sub">${kind==='club'?`ม.${s.grade}/${s.room_no}`:''}</div></td>
- <td><div class="attendance-tap" role="group" aria-label="เช็กชื่อ ${esc(personName(s))}">
- ${statuses.map(st=>`<button type="button" class="att-tap ${s.status===st?'selected':''}" data-status="${st}" aria-pressed="${s.status===st}">${st}</button>`).join('')}
- <button type="button" class="att-tap unmarked ${!s.status?'selected':''}" data-status="" aria-pressed="${!s.status}">—</button></div></td>
- <td class="mini">${esc(s.marked_by||'—')}</td></tr>`).join('');
- shell(`${title('เช็กชื่อ'+label,'เลือกวันและภาคเรียน • มา/สาย = มาเรียน • ลา/ขาด = ไม่เข้าเรียน • ยังไม่ระบุไม่ถือว่าขาด')}
- <section class="card stack"><div class="grid3">
- <label class="field"><span>${label}</span><select id="attendance-target">${targets.map(t=>`<option value="${esc(t.id)}" ${config.id===t.id?'selected':''}>${esc(kind==='room'?`ม.${t.grade}/${t.room_no}`:t.name)}</option>`).join('')}</select></label>
- <label class="field"><span>วันที่กิจกรรม</span><input id="attendance-date" type="date" value="${esc(config.date)}"></label>
- <label class="field"><span>ภาคเรียน</span><select id="attendance-term" ${data.term?'disabled':''}><option value="1" ${config.term===1?'selected':''}>1</option><option value="2" ${config.term===2?'selected':''}>2</option></select></label></div>
- <div class="actions"><button id="attendance-open" class="btn primary">เปิดรายชื่อ</button><span class="tag neutral">นักเรียน ${data.items.length} คน</span></div>
- <div class="row" id="attendance-counts"><strong>สถานะ:</strong>${counts()}</div><p class="sub">แตะสถานะของนักเรียนแต่ละคนเพื่อบันทึกลง D1 ทันที · “—” = ยังไม่ระบุ</p>
+ const rows=data.items.map(s=>`<tr data-person="${esc(s.id)}"><td>${s.roll_no??'—'}</td><td>${esc(s.student_no)}</td>
+ <td>${esc(displayStudentName(s))}${kind==='club'?`<div class="mini sub">ม.${esc(s.grade)}/${esc(s.room_no)}</div>`:''}</td>
+ <td>${attendancePills(s)}</td><td class="mini" data-last-editor>${esc(s.marked_by||'—')}</td></tr>`).join('');
+ const selectors=targets.map(t=>`<option value="${esc(t.id)}" ${t.id===selected?'selected':''}>${esc(kind==='club'?t.name:`ม.${t.grade}/${t.room_no}`)}</option>`).join('');
+ shell(`${title('เช็กชื่อ'+label,'มา / สาย / ลา / ขาด / — (ยังไม่ระบุ) • บันทึกแยกแต่ละวันและประเภทกิจกรรม')}
+ <section class="card stack">
+ <div class="grid3">
+ <label class="field"><span>${kind==='club'?'ชุมนุม':'ห้องเรียน'}</span><select id="attendance-target">${selectors}</select></label>
+ <label class="field"><span>วันที่เช็กชื่อ</span><input id="attendance-date" type="date" value="${esc(config.date)}"></label>
+ <label class="field"><span>ภาคเรียน${data.term?' (กำหนดไว้แล้วสำหรับวันนี้)':''}</span><select id="attendance-term" ${data.term?'disabled':''}><option value="1" ${config.term===1?'selected':''}>ภาคเรียน 1</option><option value="2" ${config.term===2?'selected':''}>ภาคเรียน 2</option></select></label>
+ </div>
+ <div class="attendance-toolbar actions">
+ <button id="attendance-open" class="btn primary" type="button">เปิดรายชื่อวันที่เลือก</button>
+ <button id="attendance-download" class="btn" type="button">⬇ ดาวน์โหลดใบเช็กชื่อ (.xlsx)</button>
+ <button id="attendance-download-blank" class="btn" type="button">⬇ ฟอร์มเปล่า</button>
+ <span class="tag neutral">นักเรียน ${data.items.length} คน</span></div>
+ <p id="attendance-download-result" class="sub" role="status" aria-live="polite">ใช้รูปแบบเอกสารเดียวกับเมนู “แบบฟอร์มเวลาเรียน” • แยกเฉพาะกิจกรรมนี้</p>
+ <div class="row" id="attendance-counts"><strong>สรุปสถานะ:</strong>${attendanceSummary(data.counts)}</div>
+ <p class="sub">แตะสถานะเพื่อบันทึกลง D1 ทันที • “—” คือยังไม่ระบุ ไม่ถือเป็นขาดเรียน • ดาวน์โหลด Excel รวมรายการเช็กชื่อในภาคเรียนที่เลือก</p>
  <div class="table-wrap"><table class="data-table attendance-table quick-attendance"><thead><tr><th>เลขที่</th><th>เลขประจำตัว</th><th>ชื่อ-นามสกุล</th><th>สถานะ</th><th>ผู้บันทึก</th></tr></thead><tbody>${rows}</tbody></table></div></section>
- <section class="card stack section"><h3>วันที่เคยเช็กชื่อ</h3><div class="attendance-day-chips">${history.items.length?history.items.map(x=>`<button class="btn small" data-att-date="${esc(x.date)}">${esc(x.date)} • ภาค ${x.term} • ${x.marked} คน</button>`).join(''):'ยังไม่มีประวัติ'}</div></section>`);
+ <section class="card stack section"><h3>วันที่เคยเช็กชื่อ (100 วันล่าสุด)</h3><div class="attendance-day-chips">${history.items.length?history.items.map(h=>`<button class="btn small" data-att-date="${esc(h.date)}" type="button">${esc(h.date)} • ภาค ${h.term} • ${h.marked} คน</button>`).join(''):'ยังไม่มีวันที่บันทึก'}</div></section>`);
  const $=id=>root.querySelector('#'+id);
- $('attendance-open').onclick=async()=>{config.id=$('attendance-target').value;config.date=$('attendance-date').value;config.term=Number($('attendance-term').value);await loadTab(true);};
- root.querySelectorAll('[data-att-date]').forEach(b=>b.onclick=async()=>{config.date=b.dataset.attDate;await loadTab(true);});
+ $('attendance-open').onclick=async()=>{
+   const currentId=$('attendance-target').value;
+   if(community)config.room_id=currentId;else config.id=currentId;
+   config.date=$('attendance-date').value;
+   config.term=Number($('attendance-term').value);
+   await loadTab(true);
+ };
+ root.querySelectorAll('[data-att-date]').forEach(button=>button.onclick=async()=>{
+   config.date=button.dataset.attDate;await loadTab(true);
+ });
  root.querySelectorAll('[data-person]').forEach(row=>{
    const person=data.items.find(s=>s.id===row.dataset.person);if(!person)return;
    row.querySelectorAll('.att-tap').forEach(button=>button.onclick=async()=>{
      if(row.dataset.busy==='1')return;
-     row.dataset.busy='1';row.querySelectorAll('.att-tap').forEach(x=>x.disabled=true);
+     row.dataset.busy='1';row.querySelectorAll('.att-tap').forEach(item=>item.disabled=true);
      const status=button.dataset.status||null;
      try{
-      const result=await post('attendance/mark',{kind,id:config.id,date:config.date,term:config.term,student_id:person.id,status,version:person.attendance_version});
-      data.counts[person.status||'ยังไม่ระบุ']--;person.status=status;person.attendance_version=result.version;
-      data.counts[status||'ยังไม่ระบุ']++;$('attendance-counts').innerHTML='<strong>สถานะ:</strong>'+counts();
-      row.querySelectorAll('.att-tap').forEach(b=>{const yes=(b.dataset.status||null)===status;b.classList.toggle('selected',yes);b.setAttribute('aria-pressed',String(yes));});
-     }catch(e){notify(e.message);await loadTab(true);return;}finally{row.dataset.busy='0';row.querySelectorAll('.att-tap').forEach(x=>x.disabled=false);}
+       const payload={date:config.date,term:config.term,student_id:person.id,status,version:person.attendance_version};
+       const result=community?await post('community/mark',{...payload,room_id:selected}):await post('attendance/mark',{...payload,kind,id:selected});
+       const old=person.status||'ยังไม่ระบุ',next=status||'ยังไม่ระบุ';
+       data.counts[old]=Math.max(0,data.counts[old]-1);
+       data.counts[next]=(data.counts[next]||0)+1;
+       person.status=status;person.attendance_version=result.version;
+       $('attendance-counts').innerHTML='<strong>สรุปสถานะ:</strong>'+attendanceSummary(data.counts);
+       row.querySelector('[data-last-editor]').textContent=state.user.display_name;
+       row.querySelectorAll('.att-tap').forEach(b=>{
+         const yes=(b.dataset.status||null)===status;
+         b.classList.toggle('selected',yes);b.setAttribute('aria-pressed',String(yes));
+       });
+       if(!data.term){data.term=config.term;$('attendance-term').disabled=true;}
+     }catch(e){notify(e.message);await loadTab(true);return;}
+     finally{row.dataset.busy='0';row.querySelectorAll('.att-tap').forEach(item=>item.disabled=false);}
    });
  });
+ async function exportAttendance(blank=false){
+   const buttons=[$('attendance-download'),$('attendance-download-blank')],status=$('attendance-download-result');
+   buttons.forEach(b=>b.disabled=true);status.textContent='กำลังสร้างแบบฟอร์ม Excel…';
+   try{
+     const term=Number(config.term),formKind=kind==='room'?'room':kind;
+     const formData=await api(`forms/data?kind=${formKind}&id=${encodeURIComponent(selected)}&term=${term}`);
+     const activity=kind==='room'?`เช็กชื่อตามห้อง ${formData.label}`:kind==='community'?`บำเพ็ญประโยชน์ ${formData.label}`:formData.label;
+     const result=await buildActivityForms({kind:formKind,term,year:Number(formData.year),activity,startDate:'',
+       students:blank?[]:formData.students,sessions:blank?[]:formData.sessions,sessionCount:blank?0:formData.sessionCount||0});
+     const link=document.createElement('a'),url=URL.createObjectURL(result.blob);
+     link.href=url;link.download=blank?result.filename.replace(/\.(xlsx|zip)$/i,'_blank.$1'):result.filename;
+     document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+     status.textContent=`ดาวน์โหลดสำเร็จ • ${blank?'ฟอร์มเปล่า':formData.students.length+' คน'} • ${result.pages} ไฟล์${result.note?' • '+result.note:''}`;
+   }catch(e){status.textContent='ดาวน์โหลดไม่สำเร็จ: '+e.message;notify(e.message);}
+   finally{buttons.forEach(b=>b.disabled=false);}
+ }
+ $('attendance-download').onclick=()=>exportAttendance(false);
+ $('attendance-download-blank').onclick=()=>exportAttendance(true);
 }
 async function showPhotoDocument(kind){
  const options=await api('forms/options');
@@ -714,7 +732,8 @@ async function loadTab(reload=false){if(!state.user)return;
     case 'dashboard':{const [summary,breakdown]=await Promise.all([api('dashboard'),api('dashboard/rooms')]);state.dashboard=summary;state.roomBreakdown=breakdown.items;renderDashboard();break;}
     case 'archived':{if(!allAdmin()){state.tab='dashboard';return loadTab();}const params=new URLSearchParams({page:String(state.page),q:state.query});state.archived=(await api('students/archived?'+params)).items;renderArchived();break;}
     case 'club-import':{if(!canClubImport()){state.tab='dashboard';return loadTab();}const [allowed,hist]=await Promise.all([api('club-import/allowed'),api('club-import/history')]);state.allowedClubs=allowed.items;state.clubImportHistory=hist.items;renderClubImport();break;}
-    case 'community':case 'community-attendance':await showCommunity();break;
+    case 'community':state.tab='community-attendance';await showCommunity();break;
+    case 'community-attendance':await showCommunity();break;
     case 'attendance-room':await showActivityAttendance('room');break;
     case 'attendance-club':await showActivityAttendance('club');break;
     case 'photo-club':await showPhotoDocument('club');break;

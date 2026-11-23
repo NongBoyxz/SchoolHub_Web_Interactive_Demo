@@ -176,3 +176,31 @@ body{font-family:"Noto Sans Thai","Leelawadee UI",Tahoma,"Segoe UI",sans-serif;l
  .att-tap{min-width:0;padding:10px 5px;font-size:12px}
  .data-table tbody tr td::before{flex-basis:29%}
 }
+
+/* SchoolHub v1.8.1 — predictable checkbox size in all modals. */
+.club-active-toggle{display:inline-flex!important;align-items:center;justify-content:flex-start;gap:10px;width:auto!important;line-height:1.5;cursor:pointer}
+.club-active-toggle input[type="checkbox"]{appearance:auto!important;display:inline-block!important;box-sizing:border-box!important;width:18px!important;height:18px!important;min-height:18px!important;max-width:18px!important;flex:0 0 18px!important;margin:0!important;padding:0!important;accent-color:var(--blue)}
+.club-active-toggle span{font-size:13px;font-weight:650;color:var(--ink)}
+/* Real <img>-backed crop preview: the canvas is only used when exporting. */
+.photo-frame{position:relative;width:100%;aspect-ratio:4/3;overflow:hidden;border:2px solid #7aa7bc;border-radius:10px;background:#ecf4f8;touch-action:none;user-select:none;cursor:grab;box-shadow:inset 0 0 0 1px #fff,0 5px 18px #1e52681a}
+.photo-frame:active{cursor:grabbing}
+.photo-frame img{position:absolute;display:block;max-width:none!important;max-height:none!important;object-fit:fill;pointer-events:none;user-select:none;-webkit-user-drag:none}
+.photo-frame img[hidden],.photo-placeholder[hidden]{display:none!important}
+.photo-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#436a7d;font-weight:700;font-size:40px;text-align:center}
+.photo-placeholder span{font-size:15px}.photo-placeholder small{font-size:12px;font-weight:400;color:#678497}
+.photo-guides{pointer-events:none;position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,transparent 33.25%,#fff9 33.33%,transparent 33.45%,transparent 66.58%,#fff9 66.67%,transparent 66.78%),linear-gradient(0deg,transparent 33.25%,#fff9 33.33%,transparent 33.45%,transparent 66.58%,#fff9 66.67%,transparent 66.78%);outline:1px solid #ffffff90;outline-offset:-6px}
+.photo-placeholder:not([hidden])~.photo-guides{display:none}
+#photo-file-info{overflow-wrap:anywhere}
+.attendance-toolbar{gap:9px}
+.attendance-toolbar .btn{min-height:43px}
+.quick-attendance .att-tap{white-space:nowrap}
+.quick-attendance td:nth-child(4){min-width:275px}
+@media(max-width:800px){
+ .quick-attendance td:nth-child(4){min-width:0}
+ .attendance-toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch}
+ .attendance-toolbar #attendance-open{grid-column:1/-1}
+ .attendance-toolbar .tag{grid-column:1/-1;justify-self:start}
+ .attendance-toolbar button{white-space:normal;line-height:1.25;padding:9px 7px}
+ .photo-frame{max-width:650px;margin-inline:auto}
+}
+@media(max-width:400px){.attendance-toolbar{grid-template-columns:1fr}.attendance-toolbar #attendance-open{grid-column:auto}}

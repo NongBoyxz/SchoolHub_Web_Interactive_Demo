@@ -32,3 +32,18 @@ test('generate two separate activity-photo Word documents with cropped image emb
    }
  }finally{globalThis.fetch=originalFetch;}
 });
+
+test('v1.8.1 on-device preview uses a crop frame that matches JPEG export at 4:3',async()=>{
+ const {cropFrameGeometry}=await import('../public/app/photo-report.js');
+ const size=cropFrameGeometry(800,600,1,0,0);
+ assert.equal(size.width/size.height,4/3);
+ assert.equal(size.left,0);assert.equal(size.top,0);
+ const portrait=cropFrameGeometry(900,1200,1,0,0);
+ assert.equal(portrait.height,1600);assert.equal(portrait.left,0);assert.equal(portrait.top,-350);
+ const dragged=cropFrameGeometry(900,1200,1,500,-1000);
+ assert.equal(dragged.x,0);assert.equal(dragged.y,-350);
+ const z=cropFrameGeometry(900,1200,2,100,25);
+ assert.ok(z.width>=1200&&z.height>=900);
+ assert.equal(z.x,100);assert.equal(z.y,25);
+ assert.throws(()=>cropFrameGeometry(0,0),/ขนาดภาพ/);
+});

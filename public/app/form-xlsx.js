@@ -108,7 +108,7 @@ async function keepOnlyActivitySheets(archive,kind){
    for(const node of sheets){
     const id=node.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id');
     if(!keptIds.has(id))node.parentNode.removeChild(node);
-    else if(kind==='other')node.setAttribute('name',id==='rId2'?'เช็กชื่อกิจกรรมอื่น':'ตารางกิจกรรมอื่น');
+    else if(kind==='other'||kind==='room')node.setAttribute('name',id==='rId2'?(kind==='room'?'เช็กชื่อตามห้อง':'เช็กชื่อกิจกรรมอื่น'):(kind==='room'?'ตารางกิจกรรมตามห้อง':'ตารางกิจกรรมอื่น'));
    }
    // The source workbook may have an active tab that has just been removed.
    for(const view of doc.getElementsByTagNameNS(doc.documentElement.namespaceURI,'workbookView'))view.setAttribute('activeTab','0');
@@ -135,10 +135,10 @@ async function buildSingle(archive,opts,page,index,total){
  const attendance=kind==='community'?5:2,schedule=kind==='community'?4:3;
  const changes={};for(let n=1;n<=5;n++)changes['xl/worksheets/sheet'+n+'.xml']={};
  const communityTitle=`แบบประเมินการจัดกิจกรรมบำเพ็ญประโยชน์ฯ ภาคเรียนที่ ${term} ปีการศึกษา ${year}`;
- const clubTitle=`แบบประเมินการจัดกิจกรรม${kind==='other'?activity:'ชุมนุม'} ภาคเรียนที่ ${term} ปีการศึกษา ${year}`;
+ const clubTitle=`แบบประเมินการจัดกิจกรรม${kind==='other'||kind==='room'?activity:'ชุมนุม'} ภาคเรียนที่ ${term} ปีการศึกษา ${year}`;
  changes['xl/worksheets/sheet2.xml'].B1=clubTitle;
  changes['xl/worksheets/sheet5.xml'].B1=communityTitle;
- changes['xl/worksheets/sheet3.xml'].B2=`ตารางการจัดกิจกรรม${kind==='other'?activity:'ชุมนุม'} ${kind==='club'||kind==='other'?activity:''}`;
+ changes['xl/worksheets/sheet3.xml'].B2=`ตารางการจัดกิจกรรม${kind==='other'||kind==='room'?activity:'ชุมนุม'} ${kind==='club'||kind==='other'||kind==='room'?activity:''}`;
  changes['xl/worksheets/sheet4.xml'].B2='ตารางการจัดกิจกรรมบำเพ็ญประโยชน์ฯ';
  for(const n of [3,4]){
    changes[`xl/worksheets/sheet${n}.xml`].B3=`ภาคเรียนที่ ${term} ปีการศึกษา ${year}`;
@@ -152,7 +152,7 @@ async function buildSingle(archive,opts,page,index,total){
  chosen.B1=(attendance===5?communityTitle:clubTitle)+titleSuffix;
  const dates=[];
  if(startDate){for(let n=0;n<20;n++)dates.push(datePlus(startDate,n*7));}
- else if(kind==='community'){for(const s of sessions.slice(0,20))dates.push(s.date);}
+ else {for(const s of sessions.slice(0,20))dates.push(s.date);}
  for(const n of [2,5]){
   const a=changes[`xl/worksheets/sheet${n}.xml`];
   // The supplied original includes fixed dates from term 2/2569. Blank any unsupplied dates.
@@ -166,7 +166,7 @@ async function buildSingle(archive,opts,page,index,total){
  const marks=new Map(sessions.map(s=>[s.date,new Map((s.marks||[]).map(m=>[m.student_id,m.status]))]));
  for(let i=0;i<page.length;i++){
   const s=page[i],row=i+5;
-  chosen[`B${row}`]=kind==='community'?(s.roll_no??null):(index*PAGE_ROWS+i+1);
+  chosen[`B${row}`]=kind==='community'||kind==='room'?(s.roll_no??null):(index*PAGE_ROWS+i+1);
   chosen[`C${row}`]=String(s.student_no??'');
   chosen[`D${row}`]=[s.prefix,s.first_name,s.last_name].filter(Boolean).join(' ').trim();
   chosen[`F${row}`]=`ม.${s.grade}/${s.room_no}`;
@@ -190,7 +190,7 @@ async function buildSingle(archive,opts,page,index,total){
 }
 export async function buildActivityForms(options){
  const {kind,term,year,activity,startDate,students=[],sessions=[],sessionCount=0}=options;
- if(!['club','community','other'].includes(kind)||![1,2].includes(Number(term))||!Number.isInteger(Number(year))||year<2500||year>2700)throw Error('ประเภทกิจกรรม ปี หรือภาคเรียนไม่ถูกต้อง');
+ if(!['club','community','other','room'].includes(kind)||![1,2].includes(Number(term))||!Number.isInteger(Number(year))||year<2500||year>2700)throw Error('ประเภทกิจกรรม ปี หรือภาคเรียนไม่ถูกต้อง');
  if(startDate&&!/^\d{4}-\d{2}-\d{2}$/.test(startDate))throw Error('วันที่เริ่มกิจกรรมไม่ถูกต้อง');
  if(students.length>2000)throw Error('รายชื่อมากเกินขีดจำกัด');
  const r=await fetch(XLSX,{credentials:'same-origin',cache:'no-store'});
@@ -208,7 +208,7 @@ export async function buildActivityForms(options){
   files.push({name:'README.txt',method:0,...(()=>{const bytes=enc.encode(`SchoolHub ${year} semester ${term}. ${total} workbook pages. Each page contains up to ${PAGE_ROWS} students; no students omitted. Student data is confidential.`);return {packed:bytes,plainSize:bytes.length,crc:crc32(bytes)};})()});
   blob=packageZip(files);filename=`SchoolHub_${kind}_${year}_T${term}_${total}_pages.zip`;
  }
- const note=kind==='club'?'ชุมนุมยังไม่มีระบบเช็กชื่ออัตโนมัติ':kind==='other'?'เติมเฉพาะทะเบียนนักเรียน':sessionCount>20?'มีบันทึกเกิน 20 วัน: ฟอร์มใส่เฉพาะ 20 วันแรก กรุณาตรวจข้อมูลที่เหลือ':'เติมการเช็กชื่อที่มีข้อมูลจริง';
+ const note=kind==='other'?'เติมเฉพาะทะเบียนนักเรียน':sessionCount>20?'มีบันทึกเกิน 20 วัน: ฟอร์มใส่เฉพาะ 20 วันแรก กรุณาตรวจข้อมูลที่เหลือ':'เติมผลเช็กชื่อเฉพาะวันที่มีบันทึกจริง';
  return {blob,filename,pages:total,note};
 }
 // Shared ZIP primitives for the offline Word photo-report generator.

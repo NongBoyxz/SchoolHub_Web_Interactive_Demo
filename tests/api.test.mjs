@@ -619,3 +619,30 @@ test('v1.8 two separate DOCX photo templates contain official photo frame and in
    for(const key of ['ACTIVITY','DATE','PLACE','DETAILS','ADVISOR1','ADVISOR2'])assert.ok(text.includes('{{'+key+'}}'));
  }
 });
+
+test('v1.8.1 classroom attendance form data includes room marks and enforces teacher scope',async()=>{
+ const date='2026-11-21',room='2569-1-1';
+ let r=await call(`forms/data?kind=room&id=${room}&term=2`,'GET',null,session);
+ assert.equal(r.status,200,JSON.stringify(r.data));
+ assert.equal(r.data.kind,'room');
+ assert.equal(r.data.label,'ม.1/1');
+ assert.ok(r.data.students.some(s=>s.roll_no===5),'roster keeps original roll number');
+ assert.ok(r.data.sessions.some(s=>s.date===date&&s.marks.some(m=>m.status==='มา')),'room marks available for the attendance workbook');
+ const logged=await call('auth/login','POST',{username:'teacher1',password:'teacher-pass-2026'});
+ const teacher=logged.cookie.split(';')[0];
+ r=await call('forms/data?kind=room&id=2569-2-1&term=2','GET',null,teacher);
+ assert.equal(r.status,403,'teacher cannot export an unassigned classroom');
+ r=await call('forms/data?kind=room&id=2569-1-1&term=2','GET',null,teacher);
+ assert.equal(r.status,200);
+});
+
+test('v1.8.1 navigation has a single community check-in entry, consistent status buttons, no demo link',()=>{
+ const source=readFileSync(new URL('../public/app/app.js',import.meta.url),'utf8');
+ assert.ok(source.includes("{label:'🤝 บำเพ็ญประโยชน์',keys:['photo-community']}"));
+ assert.ok(source.includes("keys:['attendance-room','attendance-club','community-attendance']"));
+ assert.ok(source.includes('function attendancePills(person)'));
+ assert.ok(source.includes('function showUnifiedAttendance(kind)'));
+ assert.ok(source.includes('⬇ ดาวน์โหลดใบเช็กชื่อ (.xlsx)'));
+ assert.ok(source.includes('club-active-toggle'));
+ assert.ok(!source.includes('เว็บจำลองเดิม'));
+});

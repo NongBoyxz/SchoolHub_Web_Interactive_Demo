@@ -183,7 +183,7 @@ async function formsOptions(db,user) {
 }
 async function formsData(db,user,url) {
  const kind=required(url.searchParams.get('kind'),'ประเภทกิจกรรม',30);
- if(!['club','community','other'].includes(kind))throw error('ประเภทแบบฟอร์มไม่ถูกต้อง');
+ if(!['club','community','other','room'].includes(kind))throw error('ประเภทแบบฟอร์มไม่ถูกต้อง');
  const targetId=required(url.searchParams.get('id'),'ห้องหรือชุมนุม',80);
  const term=Number(url.searchParams.get('term')||2);
  if(![1,2].includes(term))throw error('ภาคเรียนไม่ถูกต้อง');
@@ -208,8 +208,8 @@ async function formsData(db,user,url) {
      ORDER BY CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no LIMIT 2000`).bind(targetId).all();
  }
  const sessions=[];let sessionCount=0;
- if(kind==='club') {
-   const seen=await db.prepare(`SELECT id,activity_date AS date FROM activity_sessions WHERE kind='club' AND target_id=? AND term=? ORDER BY activity_date ASC LIMIT 200`).bind(targetId,term).all();
+ if(kind==='club'||kind==='room') {
+   const seen=await db.prepare(`SELECT id,activity_date AS date FROM activity_sessions WHERE kind=? AND target_id=? AND term=? ORDER BY activity_date ASC LIMIT 200`).bind(kind,targetId,term).all();
    sessionCount=seen.results.length;
    for(const day of seen.results.slice(0,20)) {
      const statuses=await db.prepare(`SELECT student_id,status FROM activity_attendance WHERE session_id=? AND status IS NOT NULL`).bind(day.id).all();
@@ -1104,7 +1104,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.8.0'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.8.1'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}
