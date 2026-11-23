@@ -1,3 +1,9 @@
+## v1.7.0 — เลขที่นักเรียน / แบบฟอร์มแยกประเภท / เมนูย่อ
+
+เพิ่มช่อง `roll_no` ให้ตาราง `students` (Migration 0007) และเรียงรายชื่อในห้องตามเลขที่ต้นฉบับพร้อมแสดงในหน้าเว็บ/เช็กชื่อ/CSV; เมนูยุบเหลือกลุ่มหลักที่เปิดเมนูย่อยได้ และไฟล์แบบฟอร์มแต่ละประเภทเหลือเพียง 2 Worksheet ที่เกี่ยวข้อง
+
+ข้อมูลเลขที่จริง **ไม่อยู่ใน Source Code** ต้องนำเข้าไฟล์ `PRIVATE_student_roll_numbers_2569.sql` แยกผ่าน Wrangler หลังสำรอง D1; เก็บไฟล์นี้นอก Repository และอย่า Commit ขึ้น GitHub
+
 # SchoolHub Cloudflare v1.6.3 — โรงเรียนเทพศาลาประชาสรรค์
 
 This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` binding. Do not commit database exports, real student rosters, access tokens, or user passwords.

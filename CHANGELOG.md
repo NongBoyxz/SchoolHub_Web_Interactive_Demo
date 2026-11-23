@@ -1,3 +1,14 @@
+# SchoolHub v1.7.0 — 2026-11-20
+
+- Added `students.roll_no` for actual classroom roll numbers. Roster, attendance, forms and exports sort by grade, room, roll number (unassigned last).
+- Added optional validated roll number in the add/edit student dialog. Classroom moves clear the previous room roll by default.
+- Added a room-list shortcut to open each classroom's roster.
+- Official activity Excel exports now retain **only two related worksheets** per download: club (club attendance + activity schedule), community (community attendance + schedule), or other (two activity worksheets). Extra source sheets and workbook relationships are removed.
+- Collapsed the left sidebar into Overview plus 4 expandable navigation groups; no existing screen was removed.
+- `migrations/0007_student_roll_numbers.sql` must be applied once before deploying this build.
+- **Private student number mapping is distributed separately** and must never be pushed to GitHub.
+- 19 local API tests passed; browser XLSX exports were validated and re-imported (2 sheets each).
+
 ## v1.6.3 — Permanent removal from the disabled-account list
 - Add **ลบถาวร** next to **กู้คืนบัญชี** in **บัญชีที่นำออกแล้ว**.
 - Super Admin only; target account must already be inactive.

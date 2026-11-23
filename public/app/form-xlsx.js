@@ -86,6 +86,48 @@ function datePlus(start,days){const d=new Date(start+'T12:00:00Z');d.setUTCDate(
 function statusAbbr(status){return ({'มา':'ม','สาย':'ส','ลา':'ล','ขาด':'ข'})[status]||'';}
 function column(n){let result='';while(n){n--;result=String.fromCharCode(65+(n%26))+result;n=Math.floor(n/26);}return result;}
 function cleanName(name){return String(name||'').replace(/[\\/:*?"<>|]/g,'_').slice(0,55);}
+// Strip unrelated worksheets from the downloaded workbook, including workbook
+// tabs, relationships and content-type declarations. Source template stays intact.
+// Club/other = sheets 2,3; community service = sheets 4,5. No mixed form.
+async function keepOnlyActivitySheets(archive,kind){
+ const keptNumbers=kind==='community'?[4,5]:[2,3],kept=new Set(keptNumbers);
+ const keptIds=new Set(keptNumbers.map(n=>'rId'+n));
+ const workbooks=new Set(['xl/workbook.xml','xl/_rels/workbook.xml.rels','[Content_Types].xml']);
+ const output=[];
+ for(const entry of archive){
+  const sheet=/^xl\/worksheets\/sheet([1-6])\.xml$/.exec(entry.name);
+  const relationship=/^xl\/worksheets\/_rels\/sheet([1-6])\.xml\.rels$/.exec(entry.name);
+  if((sheet&&!kept.has(Number(sheet[1])))||(relationship&&!kept.has(Number(relationship[1]))))continue;
+  // Printer setting of sheet 2 is not needed for the community-only workbook.
+  if(kind==='community'&&entry.name.startsWith('xl/printerSettings/'))continue;
+  if(!workbooks.has(entry.name)){output.push(entry);continue;}
+  const doc=new DOMParser().parseFromString(dec.decode(await uncompressed(entry)),'application/xml');
+  if(doc.getElementsByTagName('parsererror').length)throw Error('ไม่สามารถแยก Worksheet ของแบบฟอร์มได้');
+  if(entry.name==='xl/workbook.xml'){
+   const sheets=[...doc.getElementsByTagNameNS(doc.documentElement.namespaceURI,'sheet')];
+   for(const node of sheets){
+    const id=node.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id');
+    if(!keptIds.has(id))node.parentNode.removeChild(node);
+    else if(kind==='other')node.setAttribute('name',id==='rId2'?'เช็กชื่อกิจกรรมอื่น':'ตารางกิจกรรมอื่น');
+   }
+   // The source workbook may have an active tab that has just been removed.
+   for(const view of doc.getElementsByTagNameNS(doc.documentElement.namespaceURI,'workbookView'))view.setAttribute('activeTab','0');
+  } else if(entry.name==='xl/_rels/workbook.xml.rels'){
+   const rels=[...doc.documentElement.children];
+   for(const node of rels){
+    const type=node.getAttribute('Type')||'';
+    if(type.endsWith('/worksheet')&&!keptIds.has(node.getAttribute('Id')))node.parentNode.removeChild(node);
+   }
+  } else if(entry.name==='[Content_Types].xml'){
+   for(const node of [...doc.documentElement.children]){
+    const part=/^\/xl\/worksheets\/sheet([1-6])\.xml$/.exec(node.getAttribute('PartName')||'');
+    if(part&&!kept.has(Number(part[1])))node.parentNode.removeChild(node);
+   }
+  }
+  output.push(updateEntry(entry,new XMLSerializer().serializeToString(doc)));
+ }
+ return output;
+}
 async function buildSingle(archive,opts,page,index,total){
  const {kind,term,year,activity,startDate,students,sessions}=opts;
  const mappings={};for(const x of archive){if(/^xl\/worksheets\/sheet[1-5]\.xml$/.test(x.name))mappings[x.name]=x;}
@@ -124,7 +166,7 @@ async function buildSingle(archive,opts,page,index,total){
  const marks=new Map(sessions.map(s=>[s.date,new Map((s.marks||[]).map(m=>[m.student_id,m.status]))]));
  for(let i=0;i<page.length;i++){
   const s=page[i],row=i+5;
-  chosen[`B${row}`]=index*PAGE_ROWS+i+1;
+  chosen[`B${row}`]=kind==='community'?(s.roll_no??null):(index*PAGE_ROWS+i+1);
   chosen[`C${row}`]=String(s.student_no??'');
   chosen[`D${row}`]=[s.prefix,s.first_name,s.last_name].filter(Boolean).join(' ').trim();
   chosen[`F${row}`]=`ม.${s.grade}/${s.room_no}`;
@@ -144,7 +186,7 @@ async function buildSingle(archive,opts,page,index,total){
   if(!edits){result.push(entry);continue;}
   const text=dec.decode(await uncompressed(entry));result.push(updateEntry(entry,patchCells(text,edits)));
  }
- return packageZip(result);
+ return packageZip(await keepOnlyActivitySheets(result,kind));
 }
 export async function buildActivityForms(options){
  const {kind,term,year,activity,startDate,students=[],sessions=[],sessionCount=0}=options;

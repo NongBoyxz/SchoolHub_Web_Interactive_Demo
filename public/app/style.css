@@ -73,3 +73,15 @@
 .removed-accounts summary{cursor:pointer;font-weight:700;color:#475d7a}
 .removed-accounts .data-table{margin-top:12px}
 .account-disabled{color:#a64527;font-weight:700}
+
+/* SchoolHub v1.7 — compact navigation, keep individual screens available */
+.nav-group{margin:3px 0;border-radius:10px}
+.nav-group summary{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:10px;color:#e4efff;font-weight:750;font-size:13px;cursor:pointer;list-style:none;outline-offset:2px}
+.nav-group summary::-webkit-details-marker{display:none}
+.nav-group summary::after{content:'▸';font-size:13px;opacity:.75;transform:rotate(0deg);transition:transform .15s}
+.nav-group[open] summary::after{transform:rotate(90deg)}
+.nav-group summary:hover{background:rgba(255,255,255,.09)}
+.nav-group[open]{background:rgba(0,0,0,.10)}
+.nav-children{padding:0 0 6px 12px;display:grid;gap:2px}
+.nav-children .nav-btn{font-size:12px;padding:10px 12px;min-height:38px}
+.nav-group:has(.nav-btn.active)>summary{color:white;background:rgba(255,255,255,.09)}

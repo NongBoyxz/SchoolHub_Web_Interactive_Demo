@@ -150,11 +150,11 @@ async function listStudents(db,user,url) {
   if(q){where.push(`(s.student_no LIKE ? OR s.first_name LIKE ? OR s.last_name LIKE ? OR (s.prefix||' '||s.first_name||' '||s.last_name) LIKE ?)`); args.push(`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`);}
   if(roomId){where.push('s.room_id=?'); args.push(roomId);}
   if(clubId){where.push('s.club_id=?'); args.push(clubId);}
-  const stmt=db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.status,s.version,
+  const stmt=db.prepare(`SELECT s.id,s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.status,s.version,
      r.grade,r.room_no,r.year,c.name AS club_name,
      (CASE WHEN ?=1 OR s.room_id IN (SELECT room_id FROM teacher_rooms WHERE user_id=?) THEN 1 ELSE 0 END) AS can_edit_personal
     FROM students s JOIN rooms r ON r.id=s.room_id LEFT JOIN clubs c ON c.id=s.club_id
-    WHERE ${where.join(' AND ')} ORDER BY r.grade,r.room_no,s.student_no LIMIT ? OFFSET ?`);
+    WHERE ${where.join(' AND ')} ORDER BY r.grade,r.room_no,CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no LIMIT ? OFFSET ?`);
   const rows=await stmt.bind(isAdmin(user)?1:0,user.id,...args,limit,(page-1)*limit).all();
   const total=await db.prepare(`SELECT COUNT(*) AS n FROM students s WHERE ${where.join(' AND ')}`).bind(...args).first();
   return {items:rows.results,page,page_size:limit,total:total?.n||0};
@@ -193,19 +193,19 @@ async function formsData(db,user,url) {
    if(!club||!club.active)throw error('ไม่พบชุมนุมที่เปิดใช้งาน',404);
    if(!await visibleClub(db,user,targetId))throw error('ไม่มีสิทธิ์ดาวน์โหลดรายชื่อนักเรียนของชุมนุมนี้',403,'FORBIDDEN');
    label=club.name;year=club.year;
-   roster=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no
+   roster=await db.prepare(`SELECT s.id,s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no
      FROM students s JOIN rooms r ON r.id=s.room_id WHERE s.club_id=? AND s.status='active'
      AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
-     ORDER BY r.grade,r.room_no,s.student_no LIMIT 2000`).bind(targetId).all();
+     ORDER BY r.grade,r.room_no,CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no LIMIT 2000`).bind(targetId).all();
  } else {
    const room=await db.prepare('SELECT id,year,grade,room_no FROM rooms WHERE id=?').bind(targetId).first();
    if(!room)throw error('ไม่พบห้องเรียน',404);
    if(!await visibleRoom(db,user,targetId))throw error('ไม่มีสิทธิ์ดาวน์โหลดรายชื่อห้องนี้',403,'FORBIDDEN');
    label=`ม.${room.grade}/${room.room_no}`;year=room.year;
-   roster=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no
+   roster=await db.prepare(`SELECT s.id,s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no
      FROM students s JOIN rooms r ON r.id=s.room_id WHERE s.room_id=? AND s.status='active'
      AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
-     ORDER BY s.student_no LIMIT 2000`).bind(targetId).all();
+     ORDER BY CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no LIMIT 2000`).bind(targetId).all();
  }
  const sessions=[];let sessionCount=0;
  if(kind==='community') {
@@ -221,6 +221,13 @@ async function formsData(db,user,url) {
  }
  return {kind,label,year,term,students:roster.results,sessions,sessionCount};
 }
+function validRollNo(value) {
+  if(value===undefined||value===null||String(value).trim()==='')return null;
+  if(typeof value==='boolean'||!/^\d{1,3}$/.test(String(value).trim()))throw error('เลขที่ต้องเป็นจำนวนเต็ม 1–200');
+  const n=Number(value);
+  if(!Number.isSafeInteger(n)||n<1||n>200)throw error('เลขที่ต้องเป็นจำนวนเต็ม 1–200');
+  return n;
+}
 async function createStudent(db,user,request) {
   const p=await body(request);
   const studentNo=required(p.student_no,'เลขประจำตัว',30), first=required(p.first_name,'ชื่อ',100);
@@ -230,18 +237,18 @@ async function createStudent(db,user,request) {
   if(!await visibleRoom(db,user,roomId)) throw error('ไม่มีสิทธิ์เพิ่มนักเรียนในห้องนี้',403);
   const club=await validatedClub(db,p.club_id,room.year), clubId=club?.id||null;
   if(clubId && !isAdmin(user) && !await visibleRoom(db,user,roomId)) throw error('ไม่มีสิทธิ์',403);
-  const studentId=id(),now=sqlNow();
+  const studentId=id(),now=sqlNow(),rollNo=validRollNo(p.roll_no);
   if(isAdmin(user)&&p.override_capacity===true&&cleanString(p.reason,200).length<5) throw error('กรุณากรอกเหตุผลอย่างน้อย 5 ตัวอักษรเมื่ออนุญาตเกินโควตา');
   const override=isAdmin(user)&&p.override_capacity===true;
-  const statement = db.prepare(`INSERT INTO students(id,student_no,prefix,first_name,last_name,room_id,club_id,created_at,updated_at)
-   SELECT ?,?,?,?,?,?,?,?,? WHERE ? IS NULL OR ?=1 OR
+  const statement = db.prepare(`INSERT INTO students(id,student_no,roll_no,prefix,first_name,last_name,room_id,club_id,created_at,updated_at)
+   SELECT ?,?,?,?,?,?,?,?,?,? WHERE ? IS NULL OR ?=1 OR
      (SELECT capacity FROM clubs WHERE id=?) IS NULL OR
      (SELECT COUNT(*) FROM students WHERE club_id=? AND status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id)) < (SELECT capacity FROM clubs WHERE id=?)`)
-   .bind(studentId,studentNo,cleanString(p.prefix,20),first,last,roomId,clubId,now,now,clubId,override?1:0,clubId,clubId,clubId);
+   .bind(studentId,studentNo,rollNo,cleanString(p.prefix,20),first,last,roomId,clubId,now,now,clubId,override?1:0,clubId,clubId,clubId);
   try {
     const r=await statement.run();
     if(!r.meta?.changes) throw error('ชุมนุมเต็มแล้ว ไม่สามารถเพิ่มสมาชิกได้',409,'CLUB_FULL');
-  } catch(e) { if(/UNIQUE constraint failed: students.student_no/i.test(String(e))) throw error('เลขประจำตัวนี้มีอยู่ในระบบแล้ว',409,'DUPLICATE'); throw e; }
+  } catch(e) { if(/UNIQUE constraint failed: students.room_id, students.roll_no/i.test(String(e)))throw error('เลขที่นี้มีนักเรียนในห้องแล้ว',409,'ROLL_DUPLICATE'); if(/UNIQUE constraint failed: students.student_no/i.test(String(e))) throw error('เลขประจำตัวนี้มีอยู่ในระบบแล้ว',409,'DUPLICATE'); throw e; }
   if(clubId) await db.prepare('INSERT INTO membership_history(student_id,old_club_id,new_club_id,actor_id,reason,at) VALUES(?,?,?,?,?,?)')
     .bind(studentId,null,clubId,user.id,cleanString(p.reason,200),now).run();
   await log(db,user,'create','student',studentId,{student_no:studentNo,room_id:roomId,club_id:clubId});
@@ -258,6 +265,7 @@ async function updateStudent(db,user,studentId,request) {
     first_name:p.first_name===undefined?current.first_name:required(p.first_name,'ชื่อ',100),
     last_name:p.last_name===undefined?current.last_name:required(p.last_name,'นามสกุล',100),
     room_id:p.room_id===undefined?current.room_id:required(p.room_id,'ห้องเรียน',80),
+    roll_no:p.roll_no===undefined?(p.room_id!==undefined && p.room_id!==current.room_id?null:current.roll_no):validRollNo(p.roll_no),
     status:p.status===undefined?current.status:p.status};
   if(!isAdmin(user) && (next.room_id!==current.room_id||next.status!==current.status)) throw error('ย้ายห้องหรือเปลี่ยนสถานะเป็นสิทธิ์ของ Admin เท่านั้น',403);
   if(!['active','transferred','graduated'].includes(next.status)) throw error('สถานะไม่ถูกต้อง');
@@ -266,14 +274,14 @@ async function updateStudent(db,user,studentId,request) {
   if(current.club_id && newRoom.year!==current.room_year) throw error('กรุณาย้ายชุมนุมออกก่อนย้ายไปต่างปีการศึกษา');
   const now=sqlNow();
   const stmts=[
-    db.prepare(`UPDATE students SET student_no=?,prefix=?,first_name=?,last_name=?,room_id=?,status=?,version=version+1,updated_at=?
-      WHERE id=? AND version=? AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id)`).bind(next.student_no,next.prefix,next.first_name,next.last_name,next.room_id,next.status,now,studentId,v),
+    db.prepare(`UPDATE students SET student_no=?,roll_no=?,prefix=?,first_name=?,last_name=?,room_id=?,status=?,version=version+1,updated_at=?
+      WHERE id=? AND version=? AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=students.id)`).bind(next.student_no,next.roll_no,next.prefix,next.first_name,next.last_name,next.room_id,next.status,now,studentId,v),
     db.prepare(`INSERT INTO audit_log(actor_id,action,entity_type,entity_id,details,at)
       SELECT ?,'update','student',?,?,? FROM students WHERE id=? AND version=? AND changes()>0`)
-      .bind(user.id,studentId,JSON.stringify({old:{student_no:current.student_no,room_id:current.room_id,status:current.status},new:next}),now,studentId,v+1)
+      .bind(user.id,studentId,JSON.stringify({old:{student_no:current.student_no,room_id:current.room_id,roll_no:current.roll_no,status:current.status},new:next}),now,studentId,v+1)
   ];
   try {const [r]=await db.batch(stmts); if(!r.meta?.changes) throw error('ข้อมูลมีการเปลี่ยนแปลงแล้ว กรุณาโหลดใหม่',409,'STALE');}
-  catch(e){if(/UNIQUE constraint failed: students.student_no/i.test(String(e))) throw error('เลขประจำตัวนี้มีอยู่ในระบบแล้ว',409,'DUPLICATE'); throw e;}
+  catch(e){if(/UNIQUE constraint failed: students.room_id, students.roll_no/i.test(String(e)))throw error('เลขที่นี้มีนักเรียนในห้องแล้ว',409,'ROLL_DUPLICATE'); if(/UNIQUE constraint failed: students.student_no/i.test(String(e))) throw error('เลขประจำตัวนี้มีอยู่ในระบบแล้ว',409,'DUPLICATE'); throw e;}
   return {ok:true,version:v+1};
 }
 async function transferClub(db,user,request) {
@@ -308,7 +316,7 @@ async function listArchivedStudents(db,user,url) {
   const page=Math.max(1,Math.min(1000,Number(url.searchParams.get('page'))||1));
   const args=[], where=[];
   if(q){where.push('(s.student_no LIKE ? OR s.first_name LIKE ? OR s.last_name LIKE ?)');args.push(`%${q}%`,`%${q}%`,`%${q}%`);}
-  const result=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.status,s.version,
+  const result=await db.prepare(`SELECT s.id,s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,s.room_id,s.club_id,s.status,s.version,
      r.grade,r.room_no,r.year,a.archived_at,a.reason,a.archived_by,u.display_name AS archived_by_name
      FROM student_archives a JOIN students s ON s.id=a.student_id
      JOIN rooms r ON r.id=s.room_id JOIN users u ON u.id=a.archived_by
@@ -606,13 +614,13 @@ async function exportStudents(db,user) {
   // No pagination bypass: teachers can export only records visible to their assignments.
   const where=isAdmin(user)?'1=1':'(s.room_id IN(SELECT room_id FROM teacher_rooms WHERE user_id=?) OR s.club_id IN(SELECT club_id FROM teacher_clubs WHERE user_id=?))';
   const args=isAdmin(user)?[]:[user.id,user.id];
-  const list=await db.prepare(`SELECT s.student_no,s.prefix,s.first_name,s.last_name,r.year,r.grade,r.room_no,c.name AS club_name
+  const list=await db.prepare(`SELECT s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,r.year,r.grade,r.room_no,c.name AS club_name
     FROM students s JOIN rooms r ON s.room_id=r.id LEFT JOIN clubs c ON c.id=s.club_id
-    WHERE ${where} AND s.status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id) ORDER BY r.grade,r.room_no,s.student_no`).bind(...args).all();
+    WHERE ${where} AND s.status='active' AND NOT EXISTS (SELECT 1 FROM student_archives a WHERE a.student_id=s.id) ORDER BY r.grade,r.room_no,CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no`).bind(...args).all();
   const safe = v => { const s=String(v??''); return /^[\s]*[=+\-@\t\r]/.test(s)?`'${s}`:s; };
   const quoted = v => `"${safe(v).replaceAll('"','""')}"`;
-  all.push(['เลขประจำตัว','คำนำหน้า','ชื่อ','นามสกุล','ปีการศึกษา','ระดับชั้น','ห้อง','ชุมนุม'].map(quoted).join(','));
-  for(const s of list.results) all.push([s.student_no,s.prefix,s.first_name,s.last_name,s.year,s.grade,s.room_no,s.club_name].map(quoted).join(','));
+  all.push(['เลขที่','เลขประจำตัว','คำนำหน้า','ชื่อ','นามสกุล','ปีการศึกษา','ระดับชั้น','ห้อง','ชุมนุม'].map(quoted).join(','));
+  for(const s of list.results) all.push([s.roll_no,s.student_no,s.prefix,s.first_name,s.last_name,s.year,s.grade,s.room_no,s.club_name].map(quoted).join(','));
   return new Response('\uFEFF'+all.join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="schoolhub-students.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 }
 // SchoolHub v1.4 XLSX/CSV import: admin or explicitly permitted homeroom teachers only.
@@ -922,14 +930,14 @@ async function exportClubMembers(db,user,url) {
   if(!await visibleClub(db,user,clubId))throw error('ไม่มีสิทธิ์ดูทะเบียนชุมนุมนี้',403);
   const club=await db.prepare('SELECT name FROM clubs WHERE id=?').bind(clubId).first();
   if(!club)throw error('ไม่พบชุมนุม',404);
-  const rows=await db.prepare(`SELECT s.student_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no FROM students s
+  const rows=await db.prepare(`SELECT s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,r.grade,r.room_no FROM students s
     JOIN rooms r ON r.id=s.room_id WHERE s.club_id=? AND s.status='active'
       AND NOT EXISTS(SELECT 1 FROM student_archives a WHERE a.student_id=s.id)
-      ORDER BY r.grade,r.room_no,s.student_no`).bind(clubId).all();
+      ORDER BY r.grade,r.room_no,CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no`).bind(clubId).all();
   const safe=v=>{const s=String(v??'');return /^[\s]*[=+\-@\t\r]/.test(s)?`'${s}`:s;};
   const csv=v=>`"${safe(v).replaceAll('"','""')}"`;
-  const records=[['เลขประจำตัวนักเรียน','คำนำหน้า','ชื่อ','นามสกุล','ชั้น','ห้อง','ชุมนุม'].map(csv).join(',')];
-  for(const s of rows.results)records.push([s.student_no,s.prefix,s.first_name,s.last_name,s.grade,s.room_no,club.name].map(csv).join(','));
+  const records=[['เลขที่','เลขประจำตัวนักเรียน','คำนำหน้า','ชื่อ','นามสกุล','ชั้น','ห้อง','ชุมนุม'].map(csv).join(',')];
+  for(const s of rows.results)records.push([s.roll_no,s.student_no,s.prefix,s.first_name,s.last_name,s.grade,s.room_no,club.name].map(csv).join(','));
   return new Response('\uFEFF'+records.join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8',
     'Content-Disposition':'attachment; filename="schoolhub-club-members.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
 }
@@ -952,12 +960,12 @@ async function communityAttendance(db,user,url) {
   const roomId=required(url.searchParams.get('room_id'),'ห้องเรียน',80),date=dateOnly(url.searchParams.get('date'));
   const room=await communityRoom(db,user,roomId),sessionId=roomId+'@'+date;
   const session=await db.prepare('SELECT id,term,created_at FROM community_sessions WHERE id=?').bind(sessionId).first();
-  const rows=await db.prepare(`SELECT s.id,s.student_no,s.prefix,s.first_name,s.last_name,s.version AS student_version,
+  const rows=await db.prepare(`SELECT s.id,s.student_no,s.roll_no,s.prefix,s.first_name,s.last_name,s.version AS student_version,
     a.status,COALESCE(a.version,0) AS attendance_version,a.marked_at,u.display_name AS marked_by
       FROM students s LEFT JOIN community_attendance a ON a.session_id=? AND a.student_id=s.id
       LEFT JOIN users u ON u.id=a.marked_by WHERE s.room_id=? AND s.status='active'
       AND NOT EXISTS(SELECT 1 FROM student_archives ar WHERE ar.student_id=s.id)
-      ORDER BY s.student_no`).bind(sessionId,roomId).all();
+      ORDER BY CASE WHEN s.roll_no IS NULL THEN 1 ELSE 0 END,s.roll_no,s.student_no`).bind(sessionId,roomId).all();
   const counts={มา:0,สาย:0,ลา:0,ขาด:0,ยังไม่ระบุ:0};
   for(const x of rows.results)counts[x.status||'ยังไม่ระบุ']++;
   return {room,date,term:session?.term||null,session_created_at:session?.created_at||null,counts,items:rows.results};
@@ -1018,7 +1026,7 @@ export async function onRequest({request,env}) {
       if(origin && origin!==url.origin) throw error('Cross-site request blocked',403,'ORIGIN');
       if(request.headers.get('sec-fetch-site')==='cross-site') throw error('Cross-site request blocked',403,'ORIGIN');
     }
-    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.6.3'}); }
+    if(route==='status') { requireMethod(request.method,'GET'); const first=await db.prepare('SELECT 1 AS ok FROM users LIMIT 1').first(); return json({ready:true,setup_required:!first,version:'1.7.0'}); }
     if(route==='setup') {requireMethod(request.method,'POST');return await setup(db,request,env);}
     if(route==='auth/login') {requireMethod(request.method,'POST');return await login(db,request);}
     if(route==='auth/logout') {requireMethod(request.method,'POST');const token=cookieToken(request);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();return json({ok:true},200,{'Set-Cookie':cookie('',0)});}

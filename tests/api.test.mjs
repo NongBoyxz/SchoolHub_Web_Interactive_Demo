@@ -10,6 +10,7 @@ sqlite.exec(readFileSync(new URL('../migrations/0003_excel_import.sql',import.me
 sqlite.exec(readFileSync(new URL('../migrations/0004_teacher_excel_permissions.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0005_club_import_community_attendance.sql',import.meta.url),'utf8'));
 sqlite.exec(readFileSync(new URL('../migrations/0006_purged_accounts.sql',import.meta.url),'utf8'));
+sqlite.exec(readFileSync(new URL('../migrations/0007_student_roll_numbers.sql',import.meta.url),'utf8'));
 const db={
  prepare(sql){let stmt=sqlite.prepare(sql), args=[];
    const wrap={bind(...v){args=v;return wrap;},first(){return stmt.get(...args)??null;},all(){return {results:stmt.all(...args)};},run(){return {meta:{changes:stmt.run(...args).changes}};}};
@@ -511,4 +512,35 @@ test('v1.6.3 Super Admin can permanently remove a previously disabled user from 
   assert.equal(r.status,401);
   r=await call('users','POST',{username:'purgetest',display_name:'ครูใหม่',role:'teacher',password:'new-teacher-password-2026'},session);
   assert.equal(r.status,201,'original username can be used again');
+});
+
+
+test('v1.7 classroom roll numbers are displayed and sorted correctly with gaps, and duplicate rolls are rejected', async()=>{
+  let r=await call('students','POST',{student_no:'ROLL100',roll_no:10,first_name:'สิบ',last_name:'ทดสอบ',room_id:'2569-1-1'},session);
+  assert.equal(r.status,201,JSON.stringify(r.data));const id10=r.data.id;
+  r=await call('students','POST',{student_no:'ROLL200',roll_no:2,first_name:'สอง',last_name:'ทดสอบ',room_id:'2569-1-1'},session);
+  assert.equal(r.status,201,JSON.stringify(r.data));const id2=r.data.id;
+  r=await call('students','POST',{student_no:'ROLL300',first_name:'ไม่มีเลขที่',last_name:'ทดสอบ',room_id:'2569-1-1'},session);
+  assert.equal(r.status,201,JSON.stringify(r.data));
+  r=await call('students','POST',{student_no:'ROLL400',roll_no:2,first_name:'ซ้ำ',last_name:'เลขที่',room_id:'2569-1-1'},session);
+  assert.equal(r.status,409);assert.equal(r.data.code,'ROLL_DUPLICATE');
+  r=await call('students','POST',{student_no:'ROLL500',roll_no:0,first_name:'ผิด',last_name:'เลขที่',room_id:'2569-1-1'},session);
+  assert.equal(r.status,400);
+  r=await call('students?room_id=2569-1-1','GET',null,session);
+  const ids=r.data.items.filter(s=>['ROLL100','ROLL200','ROLL300'].includes(s.student_no));
+  assert.deepEqual(ids.map(s=>s.student_no),['ROLL200','ROLL100','ROLL300']);
+  assert.equal(ids[0].roll_no,2);assert.equal(ids[1].roll_no,10);assert.equal(ids[2].roll_no,null);
+  r=await call('students/'+id10,'PATCH',{version:1,roll_no:'5'},session);
+  assert.equal(r.status,200);
+  r=await call('students/'+id2,'PATCH',{version:1,roll_no:'5'},session);
+  assert.equal(r.status,409);assert.equal(r.data.code,'ROLL_DUPLICATE');
+  r=await call('forms/data?kind=community&id=2569-1-1&term=1','GET',null,session);
+  assert.equal(r.status,200,JSON.stringify(r.data));
+  assert.ok(r.data.students.find(s=>s.id===id10).roll_no===5);
+  const listed=r.data.students.filter(s=>['ROLL100','ROLL200','ROLL300'].includes(s.student_no)).map(s=>s.student_no);
+  assert.deepEqual(listed,['ROLL200','ROLL100','ROLL300']);
+  r=await call('community/attendance?room_id=2569-1-1&date=2026-11-20','GET',null,session);
+  assert.equal(r.status,200);
+  const attendance=r.data.items.filter(s=>['ROLL100','ROLL200','ROLL300'].includes(s.student_no));
+  assert.deepEqual(attendance.map(s=>s.student_no),['ROLL200','ROLL100','ROLL300']);
 });

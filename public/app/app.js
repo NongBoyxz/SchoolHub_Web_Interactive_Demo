@@ -1,6 +1,6 @@
 import {readSchoolImport,readSchoolClubImport} from './xlsx-reader.js';
 import {buildActivityForms} from './form-xlsx.js';
-// SchoolHub Live v1.6.3 — role-scoped teacher Excel import; no student data in static assets.
+// SchoolHub Live v1.7.0 — role-scoped teacher Excel import; no student data in static assets.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
 const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,roomBreakdown:[],formOptions:null,studentTotal:0,audit:[],removalHistory:{items:[],total:0,page:1,page_size:50},removalHistoryPage:1,archived:[],importHistory:[],importDraft:null,clubImportDraft:null,clubImportHistory:[],allowedClubs:[],community:{room_id:'',date:'',term:1,items:[],dates:[]},page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -70,12 +70,19 @@ function passwordDialog(){
 }
 function navItem(key,emoji,label){return `<button class="nav-btn ${state.tab===key?'active':''}" data-tab="${key}"><span class="emoji">${emoji}</span>${esc(label)}</button>`;}
 function shell(content){
- const nav=[['dashboard','▦','ภาพรวม'],...(canUseImport()?[['import','📥','นำเข้า Excel']]:[]),...(canClubImport()?[['club-import','🗃️','นำเข้าสมาชิกชุมนุม']]:[]),['community','🤝','กิจกรรมบำเพ็ญประโยชน์'],['forms','📋','แบบฟอร์มกิจกรรม'],['students','👥','นักเรียน'],...(allAdmin()?[['archived','🗂️','รายการนักเรียนที่นำออก']]:[]),['clubs','🎯','ชุมนุม'],['rooms','🏫','ห้องเรียน'],['export','📥','ส่งออกรายงาน'],...(allAdmin()?[['users','🔐','บัญชีและสิทธิ์'],['audit','🕘','ประวัติการแก้ไข']]:[])];
- root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.6.3</small></span></div></div>
- <nav class="nav">${nav.map(([key,emoji,label])=>navItem(key,emoji,label)).join('')}</nav>
+ const groups=[
+  {label:'📚 นักเรียนและห้องเรียน',keys:['students','rooms',...(canUseImport()?['import']:[]),...(allAdmin()?['archived']:[])]},
+  {label:'🎯 ชุมนุม',keys:['clubs',...(canClubImport()?['club-import']:[])]},
+  {label:'🤝 กิจกรรมและเอกสาร',keys:['community','forms','export']},
+  ...(allAdmin()?[{label:'⚙️ ตั้งค่าระบบ',keys:['users','audit']}]:[])
+ ];
+ const tabs={students:['👥','รายชื่อนักเรียน'],rooms:['🏫','ห้องเรียน'],import:['📥','นำเข้านักเรียน'],archived:['🗂️','นักเรียนที่นำออก'],clubs:['🎯','รายชื่อชุมนุม'],'club-import':['🗃️','นำเข้าสมาชิก'],community:['🤝','บำเพ็ญประโยชน์'],forms:['📋','แบบฟอร์มกิจกรรม'],export:['📥','ส่งออกรายงาน'],users:['🔐','บัญชีและสิทธิ์'],audit:['🕘','ประวัติการแก้ไข']};
+ const nav=navItem('dashboard','▦','ภาพรวม')+groups.map(group=>`<details class="nav-group" ${group.keys.includes(state.tab)?'open':''}><summary>${esc(group.label)}</summary><div class="nav-children">${group.keys.map(key=>navItem(key,...tabs[key])).join('')}</div></details>`).join('');
+ root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.7.0</small></span></div></div>
+ <nav class="nav" aria-label="เมนูหลัก">${nav}</nav>
  <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button><p class="mini" style="color:#a4c0df;margin-top:18px">เว็บจำลองเดิม <a style="color:white" href="/">เปิดที่นี่</a></p></div></aside>
  <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
- <main class="page">${content}<p class="footer-note">SchoolHub v1.6 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
+ <main class="page">${content}<p class="footer-note">SchoolHub v1.7 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
  root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;loadTab();});
  root.querySelector('#change-password').onclick=()=>passwordDialog();
  root.querySelector('#logout').onclick=async()=>{try{await post('auth/logout',{});}catch{}state.user=null;renderLogin();};
@@ -95,12 +102,12 @@ function renderDashboard(){const d=state.dashboard||{};const stats=[['👨‍�
 }
 function selectRoomOptions(placeholder='ทุกห้อง',id=''){return `<option value="">${esc(placeholder)}</option>`+state.rooms.map(r=>`<option value="${esc(r.id)}" ${String(id)===String(r.id)?'selected':''}>ม.${r.grade}/${r.room_no} (${r.year})</option>`).join('');}
 function selectClubOptions(placeholder='ทุกชุมนุม',id=''){return `<option value="">${esc(placeholder)}</option>`+state.clubs.filter(c=>c.active).map(c=>`<option value="${esc(c.id)}" ${String(id)===String(c.id)?'selected':''}>${esc(c.name)} ${c.capacity?`(${c.members}/${c.capacity})`:''}</option>`).join('');}
-function renderStudents(){const rows=state.students.map(s=>`<tr><td><strong>${esc(s.student_no)}</strong></td><td>${esc(s.prefix+' '+s.first_name+' '+s.last_name)}</td><td>ม.${s.grade}/${s.room_no}</td><td>${esc(s.club_name||'ยังไม่มีชุมนุม')}</td><td><span class="tag neutral">v${s.version}</span></td>
+function renderStudents(){const rows=state.students.map(s=>`<tr><td><strong>${s.roll_no??'<span class="tag warning" title="ไม่มีเลขที่ในทะเบียนต้นฉบับ">ยังไม่ระบุ</span>'}</strong></td><td><strong>${esc(s.student_no)}</strong></td><td>${esc(s.prefix+' '+s.first_name+' '+s.last_name)}</td><td>ม.${s.grade}/${s.room_no}</td><td>${esc(s.club_name||'ยังไม่มีชุมนุม')}</td><td><span class="tag neutral">v${s.version}</span></td>
   <td><div class="actions">${s.can_edit_personal?`<button class="btn small" data-edit-student="${esc(s.id)}">แก้ไข</button>`:''}<button class="btn small" data-transfer="${esc(s.id)}">เปลี่ยนชุมนุม</button>${allAdmin()?`<button class="btn small danger" data-archive="${esc(s.id)}">นำออก</button>`:''}</div></td></tr>`).join('');
  shell(`${title('ข้อมูลนักเรียน','ค้นหา เพิ่ม แก้ไข หรือย้ายชุมนุม โดยบันทึกข้อมูลจริง',`<button class="btn primary" id="add-student" ${!state.rooms.length?'disabled':''}>+ เพิ่มนักเรียน</button>`)}
  <div class="card"><div class="filters"><input id="search" aria-label="ค้นหานักเรียน" placeholder="ค้นหาจากชื่อ เลขประจำตัว…" value="${esc(state.query)}"/><select id="room-filter" aria-label="เลือกห้อง">${selectRoomOptions('ทุกห้อง',state.roomFilter)}</select><select id="club-filter" aria-label="เลือกชุมนุม">${selectClubOptions('ทุกชุมนุม',state.clubFilter)}</select><button id="apply-filter" class="btn primary">ค้นหา</button></div>
  <p class="sub" role="status" aria-live="polite"><strong>พบ ${Number(state.studentTotal).toLocaleString('th-TH')} คน</strong>${state.query?' จากคำค้นหา “'+esc(state.query)+'”':''} • แสดงหน้าละ 50 รายการ • เลขประจำตัวซ้ำไม่สามารถบันทึกได้</p></div>
- <div class="section">${table(['เลขประจำตัว','ชื่อ–นามสกุล','ห้อง','ชุมนุม','เวอร์ชัน','จัดการ'],rows)}</div>
+ <div class="section">${table(['เลขที่','เลขประจำตัว','ชื่อ–นามสกุล','ห้อง','ชุมนุม','เวอร์ชัน','จัดการ'],rows)}</div>
  <div class="row between section"><p class="sub">หน้า ${state.page} / ${Math.max(1,Math.ceil(state.studentTotal/50))} • ผลลัพธ์ทั้งหมด ${Number(state.studentTotal).toLocaleString('th-TH')} คน</p><div class="actions"><button class="btn" id="prev-page" ${state.page===1?'disabled':''}>← ก่อนหน้า</button><button class="btn" id="next-page" ${state.page*50>=state.studentTotal?'disabled':''}>หน้าถัดไป →</button></div></div>`);
  root.querySelector('#add-student').onclick=()=>studentDialog();
  root.querySelector('#apply-filter').onclick=()=>{state.query=root.querySelector('#search').value.trim();state.roomFilter=root.querySelector('#room-filter').value;state.clubFilter=root.querySelector('#club-filter').value;state.page=1;loadTab();};
@@ -166,6 +173,7 @@ function studentDialog(student){
    : '';
  const fields=`<div class="grid2">${htmlField('student_no','เลขประจำตัวนักเรียน',student?.student_no||'')}${htmlField('prefix','คำนำหน้า',student?.prefix||'นาย',{required:false})}
  ${htmlField('first_name','ชื่อ',student?.first_name||'')}${htmlField('last_name','นามสกุล',student?.last_name||'')}
+ ${htmlField('roll_no','เลขที่ในห้อง (ว่างได้ หากยังไม่ยืนยัน)',student?.roll_no??'',{type:'number',min:1,required:false,max:3})}
  ${htmlField('room_id','ห้องเรียน',student?.room_id||optsRooms[0]?.id,{type:'select',items:optsRooms})}</div>
  ${!editing?htmlField('club_id','ชุมนุมเริ่มต้น','',{type:'select',items:[{id:'',label:'ยังไม่เลือกชุมนุม'},...state.clubs.filter(c=>c.active).map(c=>({id:c.id,label:c.name}))],required:false}):''}
  ${overrideFields}
@@ -175,6 +183,12 @@ function studentDialog(student){
    else await post('students',{...p,club_id:p.club_id||null,override_capacity:!!form.querySelector('[name=override_capacity]:checked')});
  });
  activateOverrideValidation();
+ if(editing){
+  // A classroom transfer must never carry the old classroom's roll number.
+  const form=modal.querySelector('#modal-form');
+  const room=form.querySelector('[name=room_id]'),roll=form.querySelector('[name=roll_no]');
+  room.addEventListener('change',()=>{roll.value=room.value===student.room_id?(student.roll_no??''):'';});
+ }
 }
 function transferDialog(student){
  const choices=[{id:'',label:'ยังไม่สังกัดชุมนุม'},...state.clubs.filter(c=>c.active).map(c=>({id:c.id,label:`${c.name} (${c.capacity?c.members+'/'+c.capacity:'ไม่จำกัด'})`}))];
@@ -204,8 +218,9 @@ function clubDialog(club){const editing=!!club;
   else await post('clubs',value);
  });
 }
-function renderRooms(){const rows=state.rooms.map(r=>`<tr><td>ม.${r.grade}/${r.room_no}</td><td>${r.year}</td><td>${state.user.role==='teacher'?'รับผิดชอบ':'—'}</td></tr>`).join('');
- shell(`${title('ห้องเรียน','รายการห้องเรียนปีการศึกษา 2569 จากฐานข้อมูล')}${table(['ห้องเรียน','ปีการศึกษา','หน้าที่ของฉัน'],rows)}`);
+function renderRooms(){const rows=state.rooms.map(r=>`<tr><td>ม.${r.grade}/${r.room_no}</td><td>${r.year}</td><td>${state.user.role==='teacher'?'รับผิดชอบ':'—'}</td><td><button class="btn small" data-room-members="${esc(r.id)}">ดูรายชื่อเรียงตามเลขที่ →</button></td></tr>`).join('');
+ shell(`${title('ห้องเรียน','คลิกดูรายชื่อเพื่อแสดงเลขที่จริงตามทะเบียนของแต่ละห้อง')}${table(['ห้องเรียน','ปีการศึกษา','หน้าที่ของฉัน','รายชื่อ'],rows)}`);
+ root.querySelectorAll('[data-room-members]').forEach(btn=>btn.onclick=()=>{state.roomFilter=btn.dataset.roomMembers;state.clubFilter='';state.query='';state.page=1;state.tab='students';loadTab();});
 }
 function renderExport(){shell(`${title('ส่งออกรายงาน','ข้อมูลจริงจากฐานข้อมูล Cloudflare D1')}
  <div class="split"><div class="card stack"><h3>ดาวน์โหลดรายชื่อนักเรียน</h3><p class="sub">เปิดได้ด้วย Microsoft Excel โดยเลือกเข้ารหัส UTF-8 และมีการป้องกันสูตรอันตรายในเซลล์</p>
@@ -560,7 +575,7 @@ async function showCommunity(){
     api('community/attendance?'+params),api('community/dates?room_id='+encodeURIComponent(cm.room_id))]);
  cm.items=data.items;cm.dates=history.items;if(data.term)cm.term=data.term;
  const entries=Object.entries(data.counts).map(([key,n])=>`<span class="tag ${key==='ขาด'||key==='ลา'?'warning':''}">${esc(key)} ${n}</span>`).join(' ');
- const rows=data.items.map(s=>`<tr data-person="${esc(s.id)}"><td>${esc(s.student_no)}</td><td>${esc(`${s.prefix} ${s.first_name} ${s.last_name}`.trim())}</td>
+ const rows=data.items.map(s=>`<tr data-person="${esc(s.id)}"><td>${s.roll_no??'—'}</td><td>${esc(s.student_no)}</td><td>${esc(`${s.prefix} ${s.first_name} ${s.last_name}`.trim())}</td>
  <td><select class="att-status" data-id="${esc(s.id)}" data-version="${s.attendance_version}" aria-label="เช็กชื่อ ${esc(s.first_name)}"><option value="" ${s.status===null?'selected':''}>ยังไม่ระบุ</option>${['มา','สาย','ลา','ขาด'].map(status=>`<option value="${status}" ${s.status===status?'selected':''}>${status}</option>`).join('')}</select></td>
  <td class="mini">${esc(s.marked_by||'—')}${s.marked_at?' • '+esc(new Date(s.marked_at).toLocaleString('th-TH')):''}</td></tr>`).join('');
  shell(`${title('กิจกรรมบำเพ็ญประโยชน์','ครูประจำชั้นทั้งสองคนเช็กชื่อได้ • แยกแต่ละวัน • มา/สาย = เข้าเรียน • ลา/ขาด = ไม่เข้าเรียน')}
@@ -569,7 +584,7 @@ async function showCommunity(){
  <label class="field"><span>ภาคเรียน (กำหนดเมื่อเช็กชื่อครั้งแรกของวันนี้)</span><select id="community-term" ${data.term?'disabled':''}><option value="1" ${cm.term===1?'selected':''}>ภาคเรียน 1</option><option value="2" ${cm.term===2?'selected':''}>ภาคเรียน 2</option></select></label></div>
  <div class="actions"><button class="btn primary" id="community-load">เปิดรายชื่อวันที่เลือก</button><button class="btn" id="community-csv">⬇ ส่งออก CSV วันที่เลือก</button></div>
  <div class="row"><strong>สรุปสถานะ:</strong>${entries}</div><p class="sub">ยังไม่ระบุ = ยังไม่เช็กชื่อ (ไม่นับเป็นขาด) • เปลี่ยนสถานะแล้วบันทึกทันทีลง D1 • หากมีการแก้ไขพร้อมกันจะให้โหลดใหม่</p>
- <div class="table-wrap"><table class="data-table attendance-table"><thead><tr><th>เลขประจำตัว</th><th>ชื่อ-นามสกุล</th><th>สถานะ</th><th>เช็กล่าสุดโดย</th></tr></thead><tbody>${rows}</tbody></table></div></section>
+ <div class="table-wrap"><table class="data-table attendance-table"><thead><tr><th>เลขที่</th><th>เลขประจำตัว</th><th>ชื่อ-นามสกุล</th><th>สถานะ</th><th>เช็กล่าสุดโดย</th></tr></thead><tbody>${rows}</tbody></table></div></section>
  <section class="card stack section"><h3>วันที่เคยเช็กชื่อ (100 วันล่าสุด)</h3><div class="attendance-day-chips">${history.items.length?history.items.map(x=>`<button class="btn small" data-cm-date="${esc(x.date)}">${esc(x.date)} • ภาค ${x.term} • ${x.marked} คน</button>`).join(''):'ยังไม่มีวันที่บันทึก'}</div></section>`);
  const $=name=>root.querySelector('#'+name);
  $('community-load').onclick=async()=>{
@@ -586,8 +601,8 @@ async function showCommunity(){
  $('community-csv').onclick=()=>{
   const protect=v=>{const st=String(v??'');return /^[\s]*[=+\-@\t\r]/.test(st)?`'${st}`:st;};
   const cell=v=>`"${protect(v).replaceAll('"','""')}"`;
-  const csv=[['วันที่','ห้อง','เลขประจำตัว','คำนำหน้า','ชื่อ','นามสกุล','สถานะ','ผู้บันทึก'].map(cell).join(',')];
-  for(const s of data.items)csv.push([cm.date,roomName(cm.room_id),s.student_no,s.prefix,s.first_name,s.last_name,s.status||'ยังไม่ระบุ',s.marked_by||''].map(cell).join(','));
+  const csv=[['วันที่','ห้อง','เลขที่','เลขประจำตัว','คำนำหน้า','ชื่อ','นามสกุล','สถานะ','ผู้บันทึก'].map(cell).join(',')];
+  for(const s of data.items)csv.push([cm.date,roomName(cm.room_id),s.roll_no??'',s.student_no,s.prefix,s.first_name,s.last_name,s.status||'ยังไม่ระบุ',s.marked_by||''].map(cell).join(','));
   const url=URL.createObjectURL(new Blob(['\uFEFF'+csv.join('\r\n')],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`SchoolHub_Community_${cm.room_id}_${cm.date}.csv`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
  };
 }
@@ -595,7 +610,7 @@ async function showCommunity(){
 function renderForms(){
  const options=state.formOptions||{rooms:[],clubs:[]};
  shell(`${title('แบบฟอร์มกิจกรรม','ใช้รูปแบบจากตารางเช็คเวลาเรียน 2.69.xlsx • สร้างไฟล์ Excel ในเบราว์เซอร์')}
- <section class="card stack"><div class="warning-box mini">ฟอร์มเปล่าจะไม่ใส่รายชื่อหรือผลเช็กชื่อ • ฟอร์มเติมข้อมูลใช้ทะเบียนตามสิทธิ์บัญชี • ผลเช็กชื่ออัตโนมัติใช้เฉพาะบำเพ็ญประโยชน์ที่บันทึกไว้ใน D1 (ระบบเช็กชื่อชุมนุมยังไม่ได้เปิดใช้งาน)</div>
+ <section class="card stack"><div class="banner mini"><strong>ดาวน์โหลดแยกประเภท:</strong> ชุมนุมมีเฉพาะ 2 แผ่นงานของชุมนุม • บำเพ็ญประโยชน์มีเฉพาะ 2 แผ่นงานของบำเพ็ญประโยชน์ • ไม่รวมแผ่นงานของอีกกิจกรรม</div><div class="warning-box mini">ฟอร์มเปล่าจะไม่ใส่รายชื่อหรือผลเช็กชื่อ • ฟอร์มเติมข้อมูลใช้ทะเบียนตามสิทธิ์บัญชี • ผลเช็กชื่ออัตโนมัติใช้เฉพาะบำเพ็ญประโยชน์ที่บันทึกไว้ใน D1 (ระบบเช็กชื่อชุมนุมยังไม่ได้เปิดใช้งาน)</div>
  <div class="grid2">
  <label class="field"><span>ประเภทกิจกรรม</span><select id="form-kind"><option value="club">ชุมนุม</option><option value="community">บำเพ็ญประโยชน์</option><option value="other">กิจกรรมอื่น ๆ (ใช้รายชื่อห้องเรียน)</option></select></label>
  <label class="field"><span>ห้องเรียน / ชุมนุม</span><select id="form-target"></select></label>
@@ -604,7 +619,7 @@ function renderForms(){
  <label class="field"><span>รูปแบบการดาวน์โหลด</span><select id="form-mode"><option value="filled">เติมรายชื่อและผลเช็กชื่อที่มี</option><option value="blank">ฟอร์มเปล่า (ไม่ใส่รายชื่อ/ผลเช็กชื่อ)</option></select></label>
  <label class="field"><span>วันที่เริ่มกิจกรรม (ไม่บังคับ; ใช้ทำหัวตาราง 20 สัปดาห์)</span><input id="form-start" type="date"></label>
  <label class="field" id="form-other-wrap" hidden><span>ชื่อกิจกรรมอื่น ๆ</span><input id="form-other-name" maxlength="80" placeholder="เช่น ลูกเสือ"></label>
- </div><p class="sub">หนึ่งหน้ารองรับรายชื่อ 41 คน ถ้ามีมากกว่านั้น ระบบจะจัดเป็นหลายไฟล์ Excel ภายใน ZIP โดยไม่ตัดรายชื่อทิ้ง</p>
+ </div><p class="sub">หนึ่งหน้ารองรับรายชื่อ 41 คน ถ้ามีมากกว่านั้น ระบบจะจัดเป็นหลายไฟล์ Excel ภายใน ZIP โดยไม่ตัดรายชื่อทิ้ง และแต่ละไฟล์มีเฉพาะแผ่นงานของกิจกรรมที่เลือก</p>
  <div class="actions"><button id="form-download" class="btn primary">⬇ ดาวน์โหลดแบบฟอร์ม Excel</button><a class="btn" href="/templates/SchoolHub_Attendance_2_69_Original.xlsx" download>ดูไฟล์ต้นฉบับ</a></div>
  <p id="form-result" class="sub" role="status" aria-live="polite"></p>
  </section>`);
