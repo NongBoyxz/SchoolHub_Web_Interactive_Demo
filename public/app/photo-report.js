@@ -1,5 +1,5 @@
 // SchoolHub v1.8: photographs stay on the device. Generate one activity-specific DOCX per download.
-import {getEntries, packageZip, updateEntry, uncompressed, crc32} from './form-xlsx.js?v=1.8.1';
+import {getEntries, packageZip, updateEntry, uncompressed, crc32} from './form-xlsx.js?v=1.8.2';
 const enc = new TextEncoder(), dec = new TextDecoder();
 const FRAME_W = 1200, FRAME_H = 900, MAX_SIZE = 10*1024*1024;
 const TEMPLATE = {club:'/templates/SchoolHub_Photo_Club_Template.docx',community:'/templates/SchoolHub_Photo_Community_Template.docx'};
@@ -36,6 +36,41 @@ export async function createPhotoDocx({kind,imageBlob,activity,date,place,detail
  if(!imageFound||!documentFound)throw Error('แบบฟอร์มมีโครงสร้างไม่ครบ');
  return {blob:packageZip(out),filename:`SchoolHub_ภาพประกอบ${label[kind]}_${cleanFile(activity)}.docx`};
 }
+// A file extension is not proof of its encoding. Surface the real format to users
+// when a renamed HEIC/AVIF file cannot be decoded as JPEG in their browser.
+export function detectImageFormat(bytes){
+ const b=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes||[]);
+ if(b.length>=3 && b[0]===0xff && b[1]===0xd8 && b[2]===0xff)return 'jpeg';
+ if(b.length>=8 && [137,80,78,71,13,10,26,10].every((n,i)=>b[i]===n))return 'png';
+ const ascii=(a,z)=>Array.from(b.slice(a,z)).map(c=>String.fromCharCode(c)).join('');
+ if(b.length>=12 && ascii(0,4)==='RIFF' && ascii(8,12)==='WEBP')return 'webp';
+ if(b.length>=12 && ascii(4,8)==='ftyp'){
+   const brands=ascii(8,Math.min(b.length,36));
+   if(/heic|heix|hevc|hevx|mif1|msf1/.test(brands))return 'heic';
+   if(/avif|avis/.test(brands))return 'avif';
+ }
+ return 'unknown';
+}
+function readImageDataURL(file){
+ return new Promise((resolve,reject)=>{
+   const reader=new FileReader();
+   reader.onload=()=>typeof reader.result==='string'?resolve(reader.result):reject(Error('ไม่สามารถอ่านข้อมูลรูปภาพได้'));
+   reader.onerror=()=>reject(Error('เบราว์เซอร์อ่านไฟล์ไม่สำเร็จ'));
+   reader.onabort=()=>reject(Error('การอ่านไฟล์ถูกยกเลิก'));
+   reader.readAsDataURL(file);
+ });
+}
+function preloadImage(src){
+ return new Promise((resolve,reject)=>{
+   const picture=new Image();
+   picture.onload=()=>{
+     if(picture.naturalWidth>0 && picture.naturalHeight>0)resolve(picture);
+     else reject(Error('ภาพไม่มีขนาดที่ใช้งานได้'));
+   };
+   picture.onerror=()=>reject(Error('เบราว์เซอร์ไม่สามารถถอดรหัสภาพได้'));
+   picture.src=src;
+ });
+}
 // Display the crop with a normal <img> element. An off-screen canvas is used only
 // for the final JPEG; this avoids blank canvas previews on some mobile browsers.
 export function cropFrameGeometry(imageWidth,imageHeight,zoom=1,x=0,y=0){
@@ -48,13 +83,14 @@ export function cropFrameGeometry(imageWidth,imageHeight,zoom=1,x=0,y=0){
 }
 export function mountPhotoReport(container,{kind='club',options={}}={}){
  if(!TEMPLATE[kind])kind='club';
- let img=null,fileUrl=null,x=0,y=0,zoom=1,busy=false,geometry=null;
+ let img=null,fileUrl=null,x=0,y=0,zoom=1,busy=false,geometry=null,loadToken=0;
  const targets=kind==='club'?(options.clubs||[]):(options.rooms||[]);
  container.innerHTML=`<div class="photo-report stack">
   <div class="banner">แนบภาพประกอบกิจกรรมของโรงเรียน • ครอปภาพก่อนดาวน์โหลดเอกสาร Word • ประมวลผลบนอุปกรณ์ของคุณโดยไม่ส่งภาพขึ้นเซิร์ฟเวอร์</div>
   <div class="photo-layout">
    <section class="card stack"><h3>1. แนบภาพและจัดกรอบ</h3>
     <label class="field"><span>เลือกรูป JPG / PNG / WebP (สูงสุด 10 MB)</span><input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif"></label>
+    <p id="photo-preview-status" class="photo-upload-status" role="status" aria-live="polite">เมื่อเลือกรูปภาพ ระบบจะแสดงตัวอย่างในกรอบด้านล่าง</p>
     <div id="photo-preview-area" class="photo-editor" aria-label="พื้นที่ครอปภาพประกอบ">
       <div id="photo-frame" class="photo-frame" role="img" aria-label="ตัวอย่างภาพที่จะใส่ในเอกสาร กรอบแนวนอนสัดส่วน 4 ต่อ 3">
         <div id="photo-placeholder" class="photo-placeholder">🖼️<span>ยังไม่ได้เลือกรูปภาพ</span><small>รูปตัวอย่างจะแสดงในกรอบนี้</small></div>
@@ -77,14 +113,18 @@ export function mountPhotoReport(container,{kind='club',options={}}={}){
     <p class="sub">เมื่อกดดาวน์โหลด ภาพที่แสดงอยู่ในกรอบจะถูกใส่ในเอกสาร Word A4 ของ${label[kind]}เพียงประเภทเดียว</p>
     <button type="button" class="btn primary" id="photo-download" disabled>⬇ ดาวน์โหลดภาพประกอบ${label[kind]} (.docx)</button><p id="photo-message" role="status" aria-live="polite" class="sub"></p>
    </section></div></div>`;
- const $=id=>container.querySelector('#'+id),cv=$('photo-crop'),ctx=cv.getContext('2d'),preview=$('photo-preview'),frame=$('photo-frame');
+ const $=id=>container.querySelector('#'+id),cv=$('photo-crop'),ctx=cv.getContext('2d'),frame=$('photo-frame');
+ let preview=$('photo-preview');
+ const previewStatus=$('photo-preview-status');
  const message=$('photo-message');
  function resetImage(){
+   loadToken++;
    if(fileUrl){URL.revokeObjectURL(fileUrl);fileUrl=null;}
    img=null;geometry=null;x=0;y=0;zoom=1;preview.hidden=true;preview.removeAttribute('src');
    $('photo-placeholder').hidden=false;$('photo-zoom').value='100';$('photo-zoom').disabled=true;
    $('photo-center').disabled=true;$('photo-download').disabled=true;$('photo-scale-label').textContent='100%';
    $('photo-file-info').textContent='เลือกรูป แล้วใช้นิ้วหรือเมาส์ลากเพื่อเลื่อนภาพในกรอบ 4:3';
+   previewStatus.dataset.state='idle';previewStatus.textContent='เมื่อเลือกรูปภาพ ระบบจะแสดงตัวอย่างในกรอบด้านล่าง';
  }
  function draw(){
    if(!img)return;
@@ -95,30 +135,67 @@ export function mountPhotoReport(container,{kind='club',options={}}={}){
    preview.style.width=(geometry.width/FRAME_W*100)+'%';
    preview.style.height=(geometry.height/FRAME_H*100)+'%';
  }
- $('photo-file').onchange=()=>{
-   const file=$('photo-file').files?.[0];resetImage();message.textContent='';
+ // Use FileReader as the primary path. Some browsers/extensions reject blob: image
+ // URLs even when the file picker accepted the JPEG; object URLs remain a fallback.
+ async function handleFileSelection(){
+   const file=$('photo-file').files?.[0];
+   resetImage();message.textContent='';
+   const current=loadToken;
    if(!file)return;
-   if(file.size>MAX_SIZE){message.textContent='รูปภาพต้องมีขนาดไม่เกิน 10 MB';return;}
-   if(!file.type.startsWith('image/')&&!/\.(jpg|jpeg|png|webp|heic|heif)$/i.test(file.name)){
-     message.textContent='กรุณาเลือกไฟล์ภาพ JPG, PNG หรือ WebP';return;
+   function fail(info){
+     if(current!==loadToken)return;
+     previewStatus.dataset.state='error';previewStatus.textContent=info;
+     message.textContent=info;
+     $('photo-file-info').textContent=`ไฟล์: ${file.name}`;
    }
-   message.textContent='กำลังโหลดตัวอย่างภาพ…';
-   fileUrl=URL.createObjectURL(file);
-   const loaded=new Image();
-   loaded.onload=()=>{
-     if(fileUrl!==loaded.src)return;
-     if(!loaded.naturalWidth||!loaded.naturalHeight){message.textContent='ไม่พบขนาดรูปภาพ';return;}
-     img=loaded;x=0;y=0;zoom=1;
-     preview.src=fileUrl;preview.hidden=false;$('photo-placeholder').hidden=true;
-     $('photo-zoom').disabled=false;$('photo-center').disabled=false;$('photo-download').disabled=false;
-     $('photo-file-info').textContent=`${file.name} • ${img.naturalWidth} × ${img.naturalHeight} พิกเซล • ลากเพื่อเลื่อนและซูมเพื่อครอป`;
-     message.textContent='แสดงตัวอย่างภาพแล้ว • ภาพที่ดาวน์โหลดจะตรงกับกรอบนี้';draw();
-   };
-   loaded.onerror=()=>{
-     resetImage();message.textContent='ไม่สามารถแสดงภาพนี้ได้ กรุณาใช้ JPG, PNG หรือ WebP (ไฟล์ HEIC อาจไม่รองรับในเบราว์เซอร์นี้)';
-   };
-   loaded.src=fileUrl;
- };
+   if(file.size>MAX_SIZE){fail('ไฟล์ใหญ่เกิน 10 MB กรุณาลดขนาดแล้วเลือกใหม่');return;}
+   if(!file.size){fail('ไฟล์ภาพว่างเปล่า กรุณาเลือกไฟล์ใหม่');return;}
+   if(!file.type.startsWith('image/')&&!/\.(jpg|jpeg|png|webp|heic|heif)$/i.test(file.name)){
+     fail('รองรับรูปภาพ JPG, PNG และ WebP เท่านั้น');return;
+   }
+   previewStatus.dataset.state='loading';previewStatus.textContent=`กำลังอ่านรูป ${file.name}…`;
+   let format='unknown';
+   try{format=detectImageFormat(new Uint8Array(await file.slice(0,36).arrayBuffer()));}catch{}
+   if(current!==loadToken)return;
+   if(format==='heic'||format==='avif'){
+     // Do attempt to decode (Safari can support HEIC), but report the actual type if it fails.
+     previewStatus.textContent=`ตรวจพบภาพ ${format.toUpperCase()} กำลังตรวจความเข้ากันได้กับเบราว์เซอร์…`;
+   }
+   let loaded=null;
+   try{
+     const dataURL=await readImageDataURL(file);
+     if(current!==loadToken)return;
+     loaded=await preloadImage(dataURL);
+   }catch(e){/* Local file reader failed; try an object URL instead. */}
+   if(current!==loadToken)return;
+   if(!loaded){
+     try{
+       fileUrl=URL.createObjectURL(file);
+       loaded=await preloadImage(fileUrl);
+     }catch(e){
+       if(format==='heic'||format==='avif'){
+         fail(`ไฟล์นี้เป็น ${format.toUpperCase()} แม้ชื่อจะลงท้าย .jpg เบราว์เซอร์นี้เปิดไม่ได้ กรุณาแปลงเป็น JPG หรือ PNG ก่อน`);
+       }else if(format==='unknown'){
+         fail('ไม่พบข้อมูลภาพ JPG/PNG/WebP ที่อ่านได้ ไฟล์อาจเสียหรือใช้นามสกุลไม่ตรงกับชนิดภาพ กรุณาลองเปิดไฟล์ด้วยแอปรูปภาพแล้วบันทึกเป็น JPG ใหม่');
+       }else{
+         fail(`เปิดตัวอย่างภาพไม่สำเร็จ (${format.toUpperCase()}) กรุณาลองบันทึกภาพเป็น JPG ใหม่ หรือใช้ Chrome/Edge ล่าสุด`);
+       }
+       return;
+     }
+   }
+   if(current!==loadToken)return;
+   img=loaded;x=0;y=0;zoom=1;
+   // Move the *already decoded* image into the crop frame instead of loading it
+   // a second time as another <img>. This eliminates a second source failure/race.
+   loaded.id='photo-preview';loaded.alt='ตัวอย่างภาพครอป 4 ต่อ 3';loaded.draggable=false;
+   loaded.hidden=false;preview.replaceWith(loaded);preview=loaded;
+   $('photo-placeholder').hidden=true;
+   $('photo-zoom').disabled=false;$('photo-center').disabled=false;$('photo-download').disabled=false;
+   $('photo-file-info').textContent=`${file.name} • ${img.naturalWidth} × ${img.naturalHeight} พิกเซล • ลากเพื่อเลื่อนและซูมเพื่อครอป`;
+   previewStatus.dataset.state='success';previewStatus.textContent=`แสดงภาพตัวอย่างแล้ว (${format==='unknown'?'ไฟล์ภาพ':format.toUpperCase()}) • สามารถครอปภาพได้ทันที`;
+   message.textContent='';draw();
+ }
+ $('photo-file').addEventListener('change',handleFileSelection);
  $('photo-zoom').oninput=()=>{zoom=Number($('photo-zoom').value)/100;$('photo-scale-label').textContent=$('photo-zoom').value+'%';draw();};
  $('photo-center').onclick=()=>{x=y=0;draw();};
  let drag=null;frame.addEventListener('pointerdown',e=>{

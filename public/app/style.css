@@ -204,3 +204,9 @@ body{font-family:"Noto Sans Thai","Leelawadee UI",Tahoma,"Segoe UI",sans-serif;l
  .photo-frame{max-width:650px;margin-inline:auto}
 }
 @media(max-width:400px){.attendance-toolbar{grid-template-columns:1fr}.attendance-toolbar #attendance-open{grid-column:auto}}
+
+/* v1.8.2 photo preview: report image decoding state near the file input. */
+.photo-upload-status{margin:0;padding:10px 12px;border:1px solid #d9e9f1;border-radius:9px;background:#f2f8fb;color:#285672;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.photo-upload-status[data-state="loading"]{border-color:#d4e7f1;background:#edf7fb;color:#26628a}
+.photo-upload-status[data-state="success"]{border-color:#a3d5bb;background:#f0faf4;color:#226c4c}
+.photo-upload-status[data-state="error"]{border-color:#e4bd98;background:#fff7ef;color:#854a20}

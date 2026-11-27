@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync} from 'node:fs';
-import {createPhotoDocx} from '../public/app/photo-report.js';
+import {createPhotoDocx,detectImageFormat} from '../public/app/photo-report.js';
 import {getEntries,uncompressed} from '../public/app/form-xlsx.js';
 const base=new URL('../public/',import.meta.url);
 const originalFetch=globalThis.fetch;
@@ -46,4 +46,13 @@ test('v1.8.1 on-device preview uses a crop frame that matches JPEG export at 4:3
  assert.ok(z.width>=1200&&z.height>=900);
  assert.equal(z.x,100);assert.equal(z.y,25);
  assert.throws(()=>cropFrameGeometry(0,0),/ขนาดภาพ/);
+});
+
+test('v1.8.2 identify actual image signatures instead of trusting extensions',()=>{
+ assert.equal(detectImageFormat(Uint8Array.from([255,216,255,224,0,0])),'jpeg');
+ assert.equal(detectImageFormat(Uint8Array.from([137,80,78,71,13,10,26,10])),'png');
+ assert.equal(detectImageFormat(new TextEncoder().encode('RIFF1234WEBP')),'webp');
+ assert.equal(detectImageFormat(new Uint8Array([0,0,0,24,...new TextEncoder().encode('ftypheic')])),'heic');
+ assert.equal(detectImageFormat(new Uint8Array([0,0,0,24,...new TextEncoder().encode('ftypavif')])),'avif');
+ assert.equal(detectImageFormat(new TextEncoder().encode('not really an image')),'unknown');
 });

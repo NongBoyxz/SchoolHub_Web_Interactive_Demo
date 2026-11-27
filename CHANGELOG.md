@@ -1,3 +1,10 @@
+## v1.8.2 — Photo preview decoding hotfix (no database migration)
+
+- Read uploaded images with FileReader (Data URL) first, with an object-URL fallback.
+- Move the successfully decoded image directly into the 4:3 preview frame (no second image load).
+- Report upload / decode status next to the file input and detect real image signatures.
+- Preserve the existing crop-to-Word and attendance features from v1.8.1.
+
 # SchoolHub v1.7.0 — 2026-11-20
 
 - Added `students.roll_no` for actual classroom roll numbers. Roster, attendance, forms and exports sort by grade, room, roll number (unassigned last).

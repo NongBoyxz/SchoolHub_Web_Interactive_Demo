@@ -4,11 +4,19 @@
 
 ข้อมูลเลขที่จริง **ไม่อยู่ใน Source Code** ต้องนำเข้าไฟล์ `PRIVATE_student_roll_numbers_2569.sql` แยกผ่าน Wrangler หลังสำรอง D1; เก็บไฟล์นี้นอก Repository และอย่า Commit ขึ้น GitHub
 
-# SchoolHub Cloudflare v1.8.1 — โรงเรียนเทพศาลาประชาสรรค์
+# SchoolHub Cloudflare v1.8.2 — โรงเรียนเทพศาลาประชาสรรค์
 
 This codebase deploys to Cloudflare Pages Functions and the existing D1 `DB` binding. Do not commit database exports, real student rosters, access tokens, or user passwords.
 
-## เวอร์ชันล่าสุด v1.8.1
+## Hotfix v1.8.2 — ภาพที่เลือกแต่ไม่ขึ้นพรีวิว
+
+- เปลี่ยนการแสดงพรีวิวให้ใช้ FileReader (Data URL) เป็นหลัก และ Object URL เป็นทางเลือกสำรอง
+- ใส่ภาพที่ถอดรหัสแล้วลงกรอบโดยตรง ลดการโหลดรูปซ้ำและปัญหา race condition
+- แสดงสถานะการอ่านภาพใกล้ช่องเลือกไฟล์ พร้อมตรวจชนิดไฟล์จริง (JPG / PNG / WebP / HEIC / AVIF)
+- ปรับข้อความข้อผิดพลาดให้บอกได้เมื่อไฟล์นามสกุล .jpg แต่ข้อมูลเป็น HEIC/AVIF หรือไฟล์เสีย
+- ไม่มีการแก้ไข D1 และไม่ต้องรัน Migration
+
+## เวอร์ชันล่าสุด v1.8.2
 
 - ภาพประกอบกิจกรรมชุมนุมและบำเพ็ญประโยชน์เป็นไฟล์ Word A4 **แยกประเภท**, เลือก/ครอปรูป 4:3 และสร้างเอกสารในเบราว์เซอร์โดยไม่อัปโหลดรูป
 - ระบบเช็กชื่อตามห้องและชุมนุมใหม่ พร้อมสถานะ มา/สาย/ลา/ขาด/ยังไม่ระบุ, สิทธิ์ผู้ใช้และประวัติแยกจากระบบบำเพ็ญประโยชน์เดิม

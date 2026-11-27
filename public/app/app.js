@@ -1,7 +1,7 @@
-import {readSchoolImport,readSchoolClubImport} from './xlsx-reader.js?v=1.8.1';
-import {buildActivityForms} from './form-xlsx.js?v=1.8.1';
-import {mountPhotoReport} from './photo-report.js?v=1.8.1';
-// SchoolHub Live v1.8.1 — role-scoped teacher Excel import; no student data in static assets.
+import {readSchoolImport,readSchoolClubImport} from './xlsx-reader.js?v=1.8.2';
+import {buildActivityForms} from './form-xlsx.js?v=1.8.2';
+import {mountPhotoReport} from './photo-report.js?v=1.8.2';
+// SchoolHub Live v1.8.2 — role-scoped teacher Excel import; no student data in static assets.
 const root=document.querySelector('#root'), modal=document.querySelector('#modal'), toastElement=document.querySelector('#toast');
 const state={user:null,tab:'dashboard',students:[],clubs:[],rooms:[],users:[],teacher_rooms:[],teacher_clubs:[],dashboard:null,roomBreakdown:[],formOptions:null,studentTotal:0,audit:[],removalHistory:{items:[],total:0,page:1,page_size:50},removalHistoryPage:1,archived:[],importHistory:[],importDraft:null,clubImportDraft:null,clubImportHistory:[],allowedClubs:[],community:{room_id:'',date:'',term:1,items:[],dates:[]},attendance:{room:{id:'',date:'',term:1},club:{id:'',date:'',term:1}},page:1,query:'',roomFilter:'',clubFilter:'',busy:false};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -83,12 +83,12 @@ function shell(content){
  'club-import':['🗃️','นำเข้าสมาชิก'],forms:['📋','แบบฟอร์มเวลาเรียน'],export:['📥','ส่งออกรายงาน'],users:['🔐','บัญชีและสิทธิ์'],audit:['🕘','ประวัติการแก้ไข'],
  'photo-club':['🖼️','ภาพประกอบชุมนุม'],'photo-community':['🖼️','ภาพประกอบบำเพ็ญ'],'attendance-room':['🏫','เช็กชื่อตามห้อง'],'attendance-club':['🎯','เช็กชื่อชุมนุม'],'community-attendance':['🤝','เช็กชื่อบำเพ็ญประโยชน์']};
  const nav=navItem('dashboard','▦','ภาพรวม')+groups.map(group=>`<details class="nav-group" ${group.keys.includes(state.tab)?'open':''}><summary>${esc(group.label)}</summary><div class="nav-children">${group.keys.map(key=>navItem(key,...tabs[key])).join('')}</div></details>`).join('');
- root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.8.1</small></span></div></div>
+ root.innerHTML=`<div class="app-layout"><aside class="sidebar" id="sidebar"><div class="sidebar-head"><div class="brand brand-sidebar">${brandMark()}<span><span class="school-title">${schoolName}</span><small class="brand-subtitle">SchoolHub Live v1.8.2</small></span></div></div>
  <nav class="nav" aria-label="เมนูหลัก">${nav}</nav>
  <div class="sidebar-foot"><strong>${esc(state.user.display_name)}</strong><p class="sub">${esc(currentRole())}</p><button id="change-password">เปลี่ยนรหัสผ่าน</button><button id="logout">ออกจากระบบ</button></div></aside>
  <button class="nav-backdrop" id="nav-backdrop" aria-label="ปิดเมนู" hidden></button>
  <div class="main"><header class="topbar"><div class="row"><button id="menu-toggle" class="btn mobile-header" aria-label="เปิดเมนู">☰</button><div><h1>${schoolName} <span class="muted mini">/ SchoolHub</span></h1><p class="sub">ปีการศึกษา 2569</p></div></div><div class="user-block"><button id="quick-attendance" class="btn" type="button">✅ เช็กชื่อ</button><span class="role-pill">${esc(currentRole())}</span><div class="avatar">${esc(state.user.display_name.charAt(0))}</div></div></header>
- <main class="page">${content}<p class="footer-note">SchoolHub v1.8.1 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
+ <main class="page">${content}<p class="footer-note">SchoolHub v1.8.2 — ระบบข้อมูลจริงบน D1 • ใช้งานตามสิทธิ์บัญชี • ไม่มีข้อมูลนักเรียนฝังในหน้าเว็บ</p></main></div></div>`;
  root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;state.page=1;root.querySelector('#sidebar').classList.remove('open');loadTab();});
  root.querySelector('#quick-attendance').onclick=()=>{state.tab=state.rooms.length?'attendance-room':state.clubs.length?'attendance-club':'community-attendance';loadTab();};
  root.querySelector('#change-password').onclick=()=>passwordDialog();
